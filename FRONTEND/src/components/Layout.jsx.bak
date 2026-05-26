@@ -1,0 +1,996 @@
+import React from "react";
+import { T } from "../posTheme";
+
+// ─── SVG Icons (memoized for performance) ────────────────────────────────────
+const Icon = React.memo(({ name, size = 18, color = "currentColor" }) => {
+  const icons = {
+    dashboard:   <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    pos:         <><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></>,
+    kds:         <><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></>,
+    shift:       <><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
+    reports:     <><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></>,
+    settings:    <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></>,
+    inventory:   <><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></>,
+    receive:     <><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0018 9h-1.26A8 8 0 103 16.29"/></>,
+    issue:       <><polyline points="16 7 12 3 8 7"/><line x1="12" y1="3" x2="12" y2="15"/><path d="M20.88 18.09A5 5 0 0018 9h-1.26A8 8 0 103 16.29"/></>,
+    expiry:      <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>,
+    variance:    <><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></>,
+    wastage:     <><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></>,
+    items:       <><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></>,
+    "items:new": <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></>,
+    "items:list":<><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></>,
+    "items:stock":<><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></>,
+    "inventory_readonly":<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>,
+    logout:      <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+    alert:       <><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+    hold:        <><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></>,
+    invoice:     <><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></>,
+    chevron:     <><polyline points="6 9 12 15 18 9"/></>,
+    user:        <><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+  };
+  
+  return (
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none"
+      stroke={color} 
+      strokeWidth={1.75} 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+      aria-hidden="true"
+    >
+      {icons[name] || icons.dashboard}
+    </svg>
+  );
+});
+
+Icon.displayName = 'Icon';
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+const SIDEBAR_WIDTH = 260;
+const TRANSITION_DURATION = 150;
+
+// Professional Green Theme Color Palette
+const GREEN_THEME = {
+  primary: "#059669",      // Emerald 600
+  primaryLight: "#10b981", // Emerald 500
+  primaryDark: "#047857",  // Emerald 700
+  primaryBg: "rgba(5, 150, 105, 0.08)",
+  primaryBorder: "rgba(5, 150, 105, 0.2)",
+  
+  secondary: "#3b82f6",    // Blue 500
+  success: "#22c55e",      // Green 500
+  warning: "#f59e0b",      // Amber 500
+  error: "#ef4444",        // Red 500
+  info: "#06b6d4",         // Cyan 500
+  
+  textPrimary: "#1f2937",
+  textSecondary: "#6b7280",
+  textMuted: "#9ca3af",
+  textLight: "#f9fafb",
+  
+  bg: "#ffffff",
+  surface: "#f9fafb",
+  card: "#ffffff",
+  border: "#e5e7eb",
+  hover: "#f3f4f6",
+};
+
+const NAV_GROUPS = [
+  { label: "Operations", ids: ["dashboard", "pos", "kds", "shift"] },
+  { label: "Menu & Stock", ids: ["items", "inventory", "inventory_readonly", "receive", "issue", "expiry", "variance", "wastage"] },
+  { label: "Reports & Admin", ids: ["reports", "settings"] },
+];
+
+const ITEMS_SUB = [
+  { id: "items:new", label: "New Item", icon: "items:new" },
+  { id: "items:list", label: "Item List", icon: "items:list" },
+  { id: "items:stock", label: "Item Stock", icon: "items:stock" },
+];
+
+const ROLE_STYLE = {
+  admin: { color: GREEN_THEME.primary, bg: GREEN_THEME.primaryBg },
+  manager: { color: GREEN_THEME.secondary, bg: "rgba(59, 130, 246, 0.08)" },
+  cashier: { color: GREEN_THEME.success, bg: "rgba(34, 197, 94, 0.08)" },
+  storekeeper: { color: "#e07b39", bg: "rgba(224, 123, 57, 0.08)" },
+  waiter: { color: "#d45b8a", bg: "rgba(212, 91, 138, 0.08)" },
+  kitchen: { color: GREEN_THEME.warning, bg: "rgba(245, 158, 11, 0.08)" },
+};
+
+const PAGE_TITLES = {
+  dashboard: "Dashboard",
+  pos: "Point of Sale",
+  kds: "Kitchen Display System",
+  shift: "Shift Management",
+  reports: "Analytics & Reports",
+  settings: "System Settings",
+  inventory: "Inventory Management",
+  inventory_readonly: "Stock Viewer",
+  receive: "Receive Stock",
+  issue: "Issue Stock",
+  expiry: "Expiry Control",
+  variance: "Variance Report",
+  wastage: "Wastage Log",
+  items: "Menu Items",
+};
+
+// ─── Helper Components ───────────────────────────────────────────────────────
+const CountBadge = React.memo(({ count, color }) => {
+  if (!count) return null;
+  return (
+    <span className="count-badge" style={{
+      background: color,
+      color: "#ffffff",
+      fontSize: 10,
+      fontWeight: 700,
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "0 5px",
+      boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+    }}>
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+});
+
+const Chip = React.memo(({ label, count, color, icon, onClick }) => (
+  <button
+    onClick={onClick}
+    className="chip"
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "6px 14px",
+      borderRadius: 8,
+      background: `${color}10`,
+      border: `1px solid ${color}30`,
+      color: color,
+      fontSize: 12,
+      fontWeight: 600,
+      fontFamily: T.font,
+      cursor: "pointer",
+      transition: "all 0.2s ease",
+      letterSpacing: "0.3px",
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.background = `${color}20`;
+      e.currentTarget.style.transform = "translateY(-1px)";
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.background = `${color}10`;
+      e.currentTarget.style.transform = "translateY(0)";
+    }}
+  >
+    {icon && <Icon name={icon} size={14} color={color} />}
+    <span>{label}</span>
+    {count > 0 && <CountBadge count={count} color={color} />}
+  </button>
+));
+
+const NavItem = React.memo(({ icon, label, isActive, onClick, right, badge }) => (
+  <button
+    onClick={onClick}
+    className="nav-item"
+    style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      width: "100%",
+      padding: "10px 20px",
+      cursor: "pointer",
+      fontSize: 13,
+      fontWeight: isActive ? 600 : 500,
+      transition: `all ${TRANSITION_DURATION}ms ease`,
+      fontFamily: T.font,
+      color: isActive ? GREEN_THEME.primary : GREEN_THEME.textSecondary,
+      background: isActive ? GREEN_THEME.primaryBg : "transparent",
+      borderLeft: `3px solid ${isActive ? GREEN_THEME.primary : "transparent"}`,
+      borderRight: "none",
+      borderTop: "none",
+      borderBottom: "none",
+      outline: "none",
+    }}
+    onMouseEnter={(e) => {
+      if (!isActive) {
+        e.currentTarget.style.background = GREEN_THEME.hover;
+        e.currentTarget.style.color = GREEN_THEME.textPrimary;
+      }
+    }}
+    onMouseLeave={(e) => {
+      if (!isActive) {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = GREEN_THEME.textSecondary;
+      }
+    }}
+  >
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      {icon}
+      <span>{label}</span>
+    </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {badge}
+      {right}
+    </div>
+  </button>
+));
+
+// ─── MAIN SIDEBAR COMPONENT ─────────────────────────────────────────────────
+export const Sidebar = React.memo(function Sidebar({ 
+  activeNav, 
+  setActiveNav, 
+  user, 
+  onLogout,
+  expiryAlertCount = 0, 
+  lowStockCount = 0, 
+  allowedNav = [] 
+}) {
+  const itemsActive = activeNav === "items" || activeNav.startsWith("items:");
+  const [itemsOpen, setItemsOpen] = React.useState(itemsActive);
+  const roleMeta = ROLE_STYLE[user?.role] || ROLE_STYLE.cashier;
+  const navById = React.useMemo(
+    () => new Map(allowedNav.map(n => [n.id, n])),
+    [allowedNav]
+  );
+
+  React.useEffect(() => {
+    if (itemsActive) setItemsOpen(true);
+  }, [itemsActive]);
+
+  // Guard clause for kitchen role
+  if (!user || user.role === "kitchen") return null;
+
+  return (
+    <aside 
+      className="sidebar"
+      style={{
+        width: SIDEBAR_WIDTH,
+        minWidth: SIDEBAR_WIDTH,
+        background: GREEN_THEME.bg,
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh",
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
+        borderRight: `1px solid ${GREEN_THEME.border}`,
+        boxShadow: "1px 0 0 rgba(0,0,0,0.05)",
+      }}
+    >
+      {/* Logo Section */}
+      <div style={{ 
+        padding: "24px 20px", 
+        borderBottom: `1px solid ${GREEN_THEME.border}`,
+        background: "linear-gradient(135deg, #ffffff 0%, #f9fafb 100%)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            flexShrink: 0,
+            background: `linear-gradient(135deg, ${GREEN_THEME.primary}, ${GREEN_THEME.success})`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 4px 6px rgba(5, 150, 105, 0.2)",
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#ffffff" strokeWidth="1.5" fill="none"/>
+              <path d="M2 17L12 22L22 17" stroke="#ffffff" strokeWidth="1.5" fill="none"/>
+              <path d="M2 12L12 17L22 12" stroke="#ffffff" strokeWidth="1.5" fill="none"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{
+              color: GREEN_THEME.textPrimary,
+              fontWeight: 800,
+              fontSize: 14,
+              letterSpacing: 1.5,
+              lineHeight: 1.3,
+              fontFamily: T.font,
+            }}>
+              DAMASCUS HOTEL
+            </div>
+            <div style={{
+              color: GREEN_THEME.primary,
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              marginTop: 3,
+              textTransform: "uppercase",
+            }}>
+              POS & Inventory System
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Staff Profile Card */}
+      <div style={{
+        margin: "16px",
+        background: roleMeta.bg,
+        borderRadius: 12,
+        padding: "12px 14px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        border: `1px solid ${roleMeta.color}20`,
+        transition: "all 0.2s ease",
+      }}>
+        <div style={{
+          width: 40,
+          height: 40,
+          borderRadius: 10,
+          flexShrink: 0,
+          background: `linear-gradient(135deg, ${roleMeta.color}40, ${roleMeta.color}20)`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}>
+          <Icon name="user" size={18} color={roleMeta.color} />
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{
+            color: GREEN_THEME.textPrimary,
+            fontSize: 13,
+            fontWeight: 700,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontFamily: T.font,
+          }}>
+            {user.name}
+          </div>
+          <div style={{
+            color: roleMeta.color,
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: 1,
+            marginTop: 2,
+          }}>
+            {user.role}
+          </div>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <nav 
+        className="sidebar-nav"
+        style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}
+        aria-label="Main navigation"
+      >
+        {NAV_GROUPS.map(group => {
+          const groupItems = group.ids
+            .map(id => navById.get(id))
+            .filter(Boolean);
+          
+          if (groupItems.length === 0) return null;
+
+          return (
+            <div key={group.label} className="nav-group">
+              <div style={{
+                padding: "12px 20px 6px",
+                fontSize: 10,
+                fontWeight: 700,
+                color: GREEN_THEME.textMuted,
+                textTransform: "uppercase",
+                letterSpacing: 1.5,
+                fontFamily: T.font,
+              }}>
+                {group.label}
+              </div>
+
+              {groupItems.map(item => {
+                const alertBadge = item.id === "expiry" ? expiryAlertCount : 
+                                 item.id === "inventory" ? lowStockCount : 0;
+                const isActive = item.id === "items" ? itemsActive : activeNav === item.id;
+
+                if (item.id === "items") {
+                  return (
+                    <div key="items" className="nav-item-group">
+                      <NavItem
+                        icon={<Icon name="items" size={16} color={isActive ? GREEN_THEME.primary : GREEN_THEME.textMuted} />}
+                        label={item.label}
+                        isActive={isActive}
+                        onClick={() => {
+                          setItemsOpen(prev => !prev);
+                          if (!itemsActive) setActiveNav("items:new");
+                        }}
+                        right={
+                          <svg 
+                            width="12" 
+                            height="12" 
+                            viewBox="0 0 24 24" 
+                            fill="none"
+                            stroke={GREEN_THEME.textMuted}
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            style={{ 
+                              transition: `transform ${TRANSITION_DURATION}ms ease`,
+                              transform: itemsOpen ? "rotate(180deg)" : "rotate(0deg)",
+                            }}
+                          >
+                            <polyline points="6 9 12 15 18 9"/>
+                          </svg>
+                        }
+                      />
+                      
+                      <div 
+                        className="nav-subitems"
+                        style={{
+                          overflow: "hidden",
+                          maxHeight: itemsOpen ? 300 : 0,
+                          transition: `max-height ${TRANSITION_DURATION}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+                        }}
+                      >
+                        {ITEMS_SUB.map(sub => {
+                          const subActive = activeNav === sub.id;
+                          return (
+                            <button
+                              key={sub.id}
+                              onClick={() => setActiveNav(sub.id)}
+                              className="nav-subitem"
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 10,
+                                width: "100%",
+                                padding: "8px 20px 8px 48px",
+                                cursor: "pointer",
+                                fontSize: 12,
+                                transition: `all ${TRANSITION_DURATION}ms ease`,
+                                fontFamily: T.font,
+                                color: subActive ? GREEN_THEME.primary : GREEN_THEME.textSecondary,
+                                fontWeight: subActive ? 600 : 400,
+                                background: subActive ? GREEN_THEME.primaryBg : "transparent",
+                                borderLeft: `2px solid ${subActive ? GREEN_THEME.primary : "transparent"}`,
+                                borderRight: "none",
+                                borderTop: "none",
+                                borderBottom: "none",
+                                outline: "none",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!subActive) {
+                                  e.currentTarget.style.background = GREEN_THEME.hover;
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!subActive) {
+                                  e.currentTarget.style.background = "transparent";
+                                }
+                              }}
+                            >
+                              <Icon name={sub.id} size={12} color={subActive ? GREEN_THEME.primary : GREEN_THEME.textMuted} />
+                              <span>{sub.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <NavItem
+                    key={item.id}
+                    icon={<Icon name={item.id} size={16} color={isActive ? GREEN_THEME.primary : GREEN_THEME.textMuted} />}
+                    label={item.label}
+                    isActive={isActive}
+                    onClick={() => setActiveNav(item.id)}
+                    badge={alertBadge > 0 && <CountBadge count={alertBadge} color={GREEN_THEME.error} />}
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* Logout Button */}
+      <button
+        onClick={onLogout}
+        className="logout-button"
+        style={{
+          padding: "14px 20px",
+          borderTop: `1px solid ${GREEN_THEME.border}`,
+          color: GREEN_THEME.textSecondary,
+          fontSize: 13,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          fontFamily: T.font,
+          transition: "all 0.2s ease",
+          background: "transparent",
+          borderLeft: "none",
+          borderRight: "none",
+          borderBottom: "none",
+          fontWeight: 500,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.color = GREEN_THEME.error;
+          e.currentTarget.style.background = "rgba(239, 68, 68, 0.05)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = GREEN_THEME.textSecondary;
+          e.currentTarget.style.background = "transparent";
+        }}
+      >
+        <Icon name="logout" size={16} color="currentColor" />
+        <span>Sign Out</span>
+      </button>
+    </aside>
+  );
+});
+
+// ─── TOPBAR COMPONENT ────────────────────────────────────────────────────────
+export const Topbar = React.memo(function Topbar({ 
+  user, 
+  alerts = 0, 
+  activeNav, 
+  setActiveNav, 
+  onLogout,
+  holdList = [], 
+  setHoldList, 
+  showHoldModal, 
+  setShowHoldModal, 
+  openInvoices = [] 
+}) {
+  const pendingHolds = holdList.filter(h => h.status === "pending");
+  const myHolds = pendingHolds.filter(h => h.waiter === user?.name);
+  const openInvCount = openInvoices.filter(i => i.status === "open").length;
+  const roleMeta = ROLE_STYLE[user?.role] || ROLE_STYLE.cashier;
+  const pageTitle = PAGE_TITLES[activeNav] || PAGE_TITLES[activeNav?.split(":")[0]] || activeNav;
+
+  if (!user || user.role === "kitchen") return null;
+
+  return (
+    <>
+      <header style={{
+        background: GREEN_THEME.bg,
+        height: 56,
+        padding: "0 24px",
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        borderBottom: `1px solid ${GREEN_THEME.border}`,
+        boxShadow: "0 1px 0 rgba(0,0,0,0.02)",
+      }}>
+        <div>
+          <h1 style={{
+            fontSize: 18,
+            fontWeight: 700,
+            color: GREEN_THEME.textPrimary,
+            fontFamily: T.font,
+            margin: 0,
+          }}>
+            {pageTitle}
+          </h1>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/* Contextual Chips */}
+          {activeNav === "pos" && user?.role === "waiter" && myHolds.length > 0 && (
+            <Chip 
+              label="My Orders" 
+              count={myHolds.length} 
+              color={GREEN_THEME.warning} 
+              icon="hold" 
+            />
+          )}
+
+          {activeNav === "pos" && user?.role === "cashier" && openInvCount > 0 && (
+            <Chip 
+              label="Open Invoices" 
+              count={openInvCount} 
+              color={GREEN_THEME.secondary} 
+              icon="invoice" 
+            />
+          )}
+
+          {activeNav === "pos" && (user?.role === "admin" || user?.role === "manager") && (
+            <Chip 
+              label="Hold List" 
+              count={pendingHolds.length} 
+              color={GREEN_THEME.warning} 
+              icon="hold"
+              onClick={() => setShowHoldModal && setShowHoldModal(true)}
+            />
+          )}
+
+
+
+          {/* User Profile Section */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "4px 12px 4px 8px",
+            background: roleMeta.bg,
+            borderRadius: 10,
+            border: `1px solid ${roleMeta.color}20`,
+          }}>
+            <div style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: `linear-gradient(135deg, ${roleMeta.color}40, ${roleMeta.color}20)`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}>
+              <Icon name="user" size={14} color={roleMeta.color} />
+            </div>
+            <div>
+              <div style={{ 
+                fontSize: 12, 
+                fontWeight: 600, 
+                color: GREEN_THEME.textPrimary, 
+                lineHeight: 1.3,
+                fontFamily: T.font,
+              }}>
+                {user?.name?.split(" ")[0]}
+              </div>
+              <div style={{ 
+                fontSize: 9, 
+                color: roleMeta.color, 
+                fontWeight: 700, 
+                textTransform: "uppercase", 
+                letterSpacing: 0.8,
+              }}>
+                {user?.role}
+              </div>
+            </div>
+          </div>
+
+          {/* Logout Icon Button */}
+          <button
+            onClick={onLogout}
+            aria-label="Sign out"
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              border: `1px solid ${GREEN_THEME.border}`,
+              background: GREEN_THEME.bg,
+              color: GREEN_THEME.textMuted,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.2s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = GREEN_THEME.error;
+              e.currentTarget.style.borderColor = GREEN_THEME.error;
+              e.currentTarget.style.background = `${GREEN_THEME.error}10`;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = GREEN_THEME.textMuted;
+              e.currentTarget.style.borderColor = GREEN_THEME.border;
+              e.currentTarget.style.background = GREEN_THEME.bg;
+            }}
+          >
+            <Icon name="logout" size={16} color="currentColor" />
+          </button>
+        </div>
+      </header>
+
+      {/* Hold List Modal */}
+      {showHoldModal && activeNav === "pos" && (
+        <HoldListModal
+          holdList={holdList}
+          setHoldList={setHoldList}
+          onClose={() => setShowHoldModal(false)}
+        />
+      )}
+    </>
+  );
+});
+
+// ─── HOLD LIST MODAL ─────────────────────────────────────────────────────────
+const HoldListModal = React.memo(({ holdList, setHoldList, onClose }) => (
+  <div 
+    className="modal-overlay"
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0, 0, 0, 0.6)",
+      backdropFilter: "blur(4px)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 200,
+      animation: "fadeIn 0.2s ease",
+    }}
+    onClick={onClose}
+  >
+    <div 
+      className="modal-content"
+      style={{
+        background: GREEN_THEME.bg,
+        borderRadius: 16,
+        width: 900,
+        maxHeight: "85vh",
+        display: "flex",
+        flexDirection: "column",
+        boxShadow: "0 24px 48px rgba(0, 0, 0, 0.3)",
+        overflow: "hidden",
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{
+        padding: "20px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        borderBottom: `1px solid ${GREEN_THEME.border}`,
+        background: GREEN_THEME.surface,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Icon name="hold" size={20} color={GREEN_THEME.warning} />
+          <h2 style={{ 
+            fontSize: 16, 
+            fontWeight: 700, 
+            color: GREEN_THEME.textPrimary,
+            margin: 0,
+            fontFamily: T.font,
+          }}>
+            Hold Orders
+          </h2>
+          {holdList.length > 0 && (
+            <span style={{
+              background: GREEN_THEME.primaryBg,
+              color: GREEN_THEME.primary,
+              fontSize: 11,
+              fontWeight: 700,
+              borderRadius: 6,
+              padding: "2px 10px",
+              fontFamily: T.font,
+            }}>
+              {holdList.length} order{holdList.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            border: `1px solid ${GREEN_THEME.border}`,
+            background: GREEN_THEME.bg,
+            color: GREEN_THEME.textMuted,
+            cursor: "pointer",
+            fontSize: 18,
+            fontWeight: 700,
+            transition: "all 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = GREEN_THEME.error;
+            e.currentTarget.style.borderColor = GREEN_THEME.error;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = GREEN_THEME.textMuted;
+            e.currentTarget.style.borderColor = GREEN_THEME.border;
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ overflowY: "auto", flex: 1 }}>
+        <table style={{ 
+          width: "100%", 
+          borderCollapse: "collapse", 
+          fontSize: 13, 
+          fontFamily: T.font,
+        }}>
+          <thead>
+            <tr style={{ 
+              background: GREEN_THEME.surface, 
+              borderBottom: `1px solid ${GREEN_THEME.border}`,
+              position: "sticky",
+              top: 0,
+            }}>
+              {["Table", "Waiter", "Items", "Total", "Time", "Status", ""].map(h => (
+                <th key={h} style={{
+                  padding: "12px 16px",
+                  textAlign: "left",
+                  fontWeight: 700,
+                  color: GREEN_THEME.textMuted,
+                  fontSize: 11,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {holdList.length === 0 ? (
+              <tr>
+                <td colSpan="7" style={{ padding: "60px 0", textAlign: "center" }}>
+                  <Icon name="hold" size={32} color={GREEN_THEME.textMuted} />
+                  <div style={{ fontWeight: 600, color: GREEN_THEME.textSecondary, marginTop: 12, fontSize: 14 }}>
+                    No orders on hold
+                  </div>
+                  <div style={{ fontSize: 12, color: GREEN_THEME.textMuted, marginTop: 4 }}>
+                    Orders from waiters will appear here
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              holdList.map((hold, i) => {
+                const statusColors = {
+                  pending: GREEN_THEME.warning,
+                  billed: GREEN_THEME.secondary,
+                  bumped: GREEN_THEME.success,
+                };
+                const statusColor = statusColors[hold.status] || GREEN_THEME.textMuted;
+                
+                return (
+                  <tr 
+                    key={hold.id} 
+                    style={{ 
+                      borderBottom: `1px solid ${GREEN_THEME.border}`,
+                      background: i % 2 === 0 ? GREEN_THEME.bg : GREEN_THEME.hover,
+                      transition: "background 0.2s ease",
+                    }}
+                  >
+                    <td style={{ padding: "12px 16px", fontWeight: 700, color: GREEN_THEME.primary }}>
+                      {hold.table}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: GREEN_THEME.textSecondary }}>
+                      {hold.createdBy}
+                    </td>
+                    <td style={{ 
+                      padding: "12px 16px", 
+                      color: GREEN_THEME.textMuted,
+                      maxWidth: 250,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {hold.items?.map(i => `${i.qty}× ${i.name}`).join(", ")}
+                    </td>
+                    <td style={{ padding: "12px 16px", fontWeight: 700, color: GREEN_THEME.textPrimary }}>
+                      KES {hold.total?.toLocaleString()}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: GREEN_THEME.textMuted, fontSize: 12 }}>
+                      {hold.createdDate}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{
+                        background: `${statusColor}20`,
+                        color: statusColor,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        borderRadius: 4,
+                        padding: "3px 10px",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}>
+                        {hold.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <button
+                        onClick={() => setHoldList?.(prev => prev.filter(h => h.id !== hold.id))}
+                        style={{
+                          padding: "4px 12px",
+                          background: `${GREEN_THEME.error}15`,
+                          color: GREEN_THEME.error,
+                          border: `1px solid ${GREEN_THEME.error}30`,
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          fontSize: 11,
+                          fontFamily: T.font,
+                          fontWeight: 600,
+                          transition: "all 0.2s ease",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = `${GREEN_THEME.error}25`;
+                          e.currentTarget.style.transform = "scale(0.98)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = `${GREEN_THEME.error}15`;
+                          e.currentTarget.style.transform = "scale(1)";
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{
+        padding: "16px 24px",
+        borderTop: `1px solid ${GREEN_THEME.border}`,
+        display: "flex",
+        justifyContent: "flex-end",
+        background: GREEN_THEME.surface,
+      }}>
+        <button
+          onClick={onClose}
+          style={{
+            padding: "8px 20px",
+            background: GREEN_THEME.primary,
+            color: "#ffffff",
+            border: "none",
+            borderRadius: 8,
+            cursor: "pointer",
+            fontWeight: 600,
+            fontSize: 13,
+            fontFamily: T.font,
+            transition: "all 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = GREEN_THEME.primaryDark;
+            e.currentTarget.style.transform = "translateY(-1px)";
+            e.currentTarget.style.boxShadow = "0 4px 8px rgba(5, 150, 105, 0.3)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = GREEN_THEME.primary;
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "none";
+          }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+));
+
+// Add keyframe animations to document
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  
+  .sidebar-nav::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  .sidebar-nav::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+  
+  .sidebar-nav::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+  
+  .sidebar-nav::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
+  
+  button, [role="button"] {
+    cursor: pointer;
+  }
+`;
+document.head.appendChild(styleSheet);
