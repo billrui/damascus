@@ -1,9 +1,29 @@
 import { useState, useEffect } from "react";
+import KitchenDisplay from "./KitchenDisplay.jsx";
 import { MENU_CATEGORIES, TAX, SVC } from "../data";
 import { fmt } from "../utils";
 import { T, pillBtn, stepBtn, actionBtn, overlay } from "../posTheme";
 
 const TABLES = ["T01","T02","T03","T04","T05","T06","T07","T08","T09","T10","T11","T12","BAR","WALK-IN"];
+
+// Bottom nav icons for mobile
+const NAV_ICONS = {
+  new_sale: (active) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={active?"#C5A059":"#6b7280"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+    </svg>
+  ),
+  kitchen: (active) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={active?"#C5A059":"#6b7280"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3v4a4 4 0 008 0V3"/><line x1="12" y1="11" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
+    </svg>
+  ),
+  invoices: (active) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={active?"#C5A059":"#6b7280"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/>
+    </svg>
+  ),
+};
 
 const KITCHEN_WARN_MS  = 10 * 60 * 1000;
 const KITCHEN_ALERT_MS = 20 * 60 * 1000;
@@ -80,55 +100,7 @@ function TimerBadge({ ms, flag }) {
   );
 }
 
-function AlertBanner({ children }) {
-  return (
-    <div style={{
-      background:"#fff5f5", border:"1px solid #fca5a5", borderLeft:"4px solid #ef4444",
-      borderRadius:6, padding:"12px 16px", marginBottom:16,
-      display:"flex", alignItems:"flex-start", gap:12,
-    }}>
-      <div style={{ width:16, height:16, borderRadius:"50%", background:"#ef4444", flexShrink:0, marginTop:1 }} />
-      <div>{children}</div>
-    </div>
-  );
-}
 
-function EmptyState({ title, subtitle }) {
-  return (
-    <div style={{ textAlign:"center", padding:"80px 20px", color:T.textMuted }}>
-      <div style={{ width:48, height:48, border:`2px solid ${T.border}`, borderRadius:12, margin:"0 auto 16px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-        <div style={{ width:20, height:20, border:`2px solid ${T.border}`, borderRadius:4 }} />
-      </div>
-      <div style={{ fontSize:15, fontWeight:700, color:T.textPrimary, marginBottom:6 }}>{title}</div>
-      <div style={{ fontSize:12, color:T.textMuted }}>{subtitle}</div>
-    </div>
-  );
-}
-
-function TabBtn({ label, badgeVal, badgeColor, active, onClick }) {
-  return (
-    <button onClick={onClick} style={{
-      padding:"10px 16px", border:"none", cursor:"pointer", fontWeight:600, fontSize:12,
-      background:"transparent", color:active ? T.textPrimary : T.textMuted,
-      borderBottom:`2px solid ${active ? T.amber : "transparent"}`,
-      transition:"all .12s", fontFamily:T.font, whiteSpace:"nowrap",
-      display:"flex", alignItems:"center", gap:6,
-    }}>
-      {label}
-      {!!badgeVal && (
-        <span style={{
-          background: badgeColor || T.amber, color:"#fff",
-          fontSize:9, fontWeight:800, borderRadius:10,
-          padding:"1px 6px", minWidth:16, textAlign:"center",
-        }}>
-          {badgeVal}
-        </span>
-      )}
-    </button>
-  );
-}
-
-// --- MAIN ---------------------------------------------------------------------
 export default function ManagerPOS({
   user, menuItems: propMenuItems,
   holdList=[], setHoldList,
@@ -311,9 +283,12 @@ export default function ManagerPOS({
       {/* -- CONTENT -- */}
       <div style={{ flex:1, display:"flex", overflow:"hidden", position:"relative" }}>
 
-        {/* -- NEW SALE ---------------------------------------------------------- */}
+        {/* -- NEW SALE — full viewport on mobile --------------------------------- */}
         {tab==="new_sale" && (
-          <>
+          <div style={{
+            flex:1, display:"flex", overflow:"hidden",
+            ...(mobile ? { position:"fixed", inset:0, zIndex:40, paddingBottom:64, flexDirection:"column" } : { flexDirection:"row" }),
+          }}>
             {/* CART - left panel on desktop, slide-up drawer on mobile */}
             {(!mobile || cartOpen) && (
               <>
@@ -595,95 +570,31 @@ export default function ManagerPOS({
                 </div>
               )}
             </div>
-          </>
-        )}
-
-        {/* -- KITCHEN MONITOR -------------------------------------------------- */}
-        {tab==="kitchen" && (
-          <div style={{ flex:1, overflowY:"auto", padding:mobile?12:20 }}>
-
-            {kitchenAlert>0 && (
-              <AlertBanner>
-                <div style={{ fontWeight:700, color:"#ef4444", fontSize:13 }}>
-                  {kitchenAlert} order{kitchenAlert>1?"s":""} delayed over {KITCHEN_ALERT_MS/60000} minutes
-                </div>
-                <div style={{ fontSize:12, color:"#b91c1c", marginTop:2 }}>
-                  Customer satisfaction is at risk - please follow up with the kitchen immediately
-                </div>
-              </AlertBanner>
-            )}
-
-            {kitchenOrders.length===0 ? (
-              <EmptyState
-                title="Kitchen is clear"
-                subtitle="All orders have been prepared and collected by waiters"
-              />
-            ) : (
-              <>
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
-                  <div style={{ fontSize:10, fontWeight:700, color:T.textMuted, textTransform:"uppercase", letterSpacing:1 }}>
-                    {kitchenOrders.length} order{kitchenOrders.length>1?"s":""} in kitchen - closes when cook marks ready
-                  </div>
-                  {!mobile && (
-                    <div style={{ display:"flex", gap:14, fontSize:10, color:T.textMuted }}>
-                      <span style={{ display:"flex", alignItems:"center", gap:5 }}><StatusDot color="#059669"/> Under 5 min</span>
-                      <span style={{ display:"flex", alignItems:"center", gap:5 }}><StatusDot color="#d97706"/> 5-10 min</span>
-                      <span style={{ display:"flex", alignItems:"center", gap:5 }}><StatusDot color="#ef4444"/> Over 10 min</span>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display:"grid", gridTemplateColumns:mobile?"1fr":tablet?"repeat(2,1fr)":"repeat(auto-fill,minmax(280px,1fr))", gap:mobile?10:12 }}>
-                  {kitchenOrders.map(h=>{
-                    const f = h.flag;
-                    const timerColor = f?.color||"#059669";
-                    return (
-                      <div key={h.id} style={{
-                        background:f?f.bg:T.card,
-                        border:`1px solid ${f?f.border:T.border}`,
-                        borderTop:`3px solid ${timerColor}`,
-                        borderRadius:8, padding:14,
-                      }}>
-                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-                          <div>
-                            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
-                              <span style={{ fontWeight:700, fontSize:14, color:f?f.color:T.textPrimary }}>Table {h.table}</span>
-                              <FlagBadge flag={f} />
-                            </div>
-                            <div style={{ fontSize:11, color:T.textSecondary }}>
-                              {h.createdBy||h.waiter} - Sent {h.createdDate}
-                            </div>
-                          </div>
-                          <TimerBadge ms={h.ms} flag={f} />
-                        </div>
-
-                        <div style={{ borderTop:`1px solid ${f?f.border:T.border}`, paddingTop:8 }}>
-                          {h.items.map((i,idx)=>(
-                            <div key={idx} style={{ display:"flex", alignItems:"baseline", gap:8, padding:"3px 0", borderBottom:idx<h.items.length-1?`1px solid ${T.border}`:"none" }}>
-                              <span style={{ fontSize:11, fontWeight:700, color:T.amber, minWidth:20 }}>{i.qty}-</span>
-                              <div style={{ flex:1 }}>
-                                <span style={{ fontSize:12, fontWeight:500, color:T.textPrimary }}>{i.name}</span>
-                                {i.note && <div style={{ fontSize:10, color:T.textMuted, fontStyle:"italic", marginTop:1 }}>Note: {i.note}</div>}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div style={{ marginTop:10, padding:"6px 10px", background:`${T.border}33`, borderRadius:4, fontSize:10, color:T.textMuted, textAlign:"center" }}>
-                          View only - closes automatically when cook marks food ready
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
           </div>
         )}
 
-        {/* -- OPEN INVOICES ---------------------------------------------------- */}
+        {/* -- KITCHEN MONITOR — full viewport ------------------------------------ */}
+        {tab==="kitchen" && (
+          <div style={{
+            flex:1, display:"flex", flexDirection:"column", overflow:"hidden",
+            ...(mobile ? { position:"fixed", inset:0, zIndex:40, paddingBottom:64 } : {}),
+          }}>
+            <KitchenDisplay
+              holdList={holdList}
+              setHoldList={setHoldList}
+              readOnly={true}
+            />
+          </div>
+        )}
+
+        {/* -- OPEN INVOICES — full viewport on mobile ---------------------------- */}
         {tab==="invoices" && (
-          <div style={{ flex:1, overflowY:"auto", padding:mobile?12:20 }}>
+          <div style={{
+            flex:1, overflowY:"auto",
+            padding:mobile?12:20,
+            ...(mobile ? { position:"fixed", inset:0, zIndex:40, paddingBottom:76 } : {}),
+            background:T.bg,
+          }}>
 
             {invoiceAlert>0 && (
               <AlertBanner>
@@ -828,6 +739,103 @@ export default function ManagerPOS({
           {modal==="kitchen_sent" ? "Order sent to kitchen" : "Bill sent to cashier"}
         </div>
       )}
+      {/* ── Mobile bottom navigation ─────────────────────────────────────────── */}
+      {mobile && (
+        <div style={{
+          position:"fixed", bottom:0, left:0, right:0, height:64, zIndex:60,
+          background:T.surface, borderTop:`1px solid ${T.border}`,
+          display:"flex", alignItems:"stretch",
+          boxShadow:"0 -4px 24px rgba(0,0,0,0.4)",
+        }}>
+          {[
+            { id:"new_sale", label:"New Sale",  badge:0 },
+            { id:"kitchen",  label:"Kitchen",   badge:kitchenWarn },
+            { id:"invoices", label:"Invoices",  badge:invoiceWarn },
+          ].map(({ id, label, badge }) => {
+            const active = tab === id;
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                style={{
+                  flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+                  justifyContent:"center", gap:3, background:"none", border:"none",
+                  cursor:"pointer", position:"relative", padding:"8px 0",
+                  borderTop: active ? `2px solid ${T.amber}` : "2px solid transparent",
+                  transition:"all 0.15s ease",
+                }}>
+                {NAV_ICONS[id](active)}
+                <span style={{
+                  fontSize:10, fontWeight: active ? 700 : 500,
+                  color: active ? T.amber : "#6b7280",
+                  letterSpacing:0.3,
+                }}>
+                  {label}
+                </span>
+                {badge > 0 && (
+                  <div style={{
+                    position:"absolute", top:8, right:"25%",
+                    minWidth:16, height:16, borderRadius:8,
+                    background: badge > 0 && (id==="kitchen" ? kitchenAlert : invoiceAlert) > 0 ? "#ef4444" : "#d97706",
+                    color:"#fff", fontSize:9, fontWeight:700,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    padding:"0 4px",
+                  }}>
+                    {badge}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
+
+function AlertBanner({ children }) {
+  return (
+    <div style={{
+      background:"#fff5f5", border:"1px solid #fca5a5", borderLeft:"4px solid #ef4444",
+      borderRadius:6, padding:"12px 16px", marginBottom:16,
+      display:"flex", alignItems:"flex-start", gap:12,
+    }}>
+      <div style={{ width:16, height:16, borderRadius:"50%", background:"#ef4444", flexShrink:0, marginTop:1 }} />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function EmptyState({ title, subtitle }) {
+  return (
+    <div style={{ textAlign:"center", padding:"80px 20px", color:T.textMuted }}>
+      <div style={{ width:48, height:48, border:`2px solid ${T.border}`, borderRadius:12, margin:"0 auto 16px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ width:20, height:20, border:`2px solid ${T.border}`, borderRadius:4 }} />
+      </div>
+      <div style={{ fontSize:15, fontWeight:700, color:T.textPrimary, marginBottom:6 }}>{title}</div>
+      <div style={{ fontSize:12, color:T.textMuted }}>{subtitle}</div>
+    </div>
+  );
+}
+
+function TabBtn({ label, badgeVal, badgeColor, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding:"10px 16px", border:"none", cursor:"pointer", fontWeight:600, fontSize:12,
+      background:"transparent", color:active ? T.textPrimary : T.textMuted,
+      borderBottom:`2px solid ${active ? T.amber : "transparent"}`,
+      transition:"all .12s", fontFamily:T.font, whiteSpace:"nowrap",
+      display:"flex", alignItems:"center", gap:6,
+    }}>
+      {label}
+      {!!badgeVal && (
+        <span style={{
+          background: badgeColor || T.amber, color:"#fff",
+          fontSize:9, fontWeight:800, borderRadius:10,
+          padding:"1px 6px", minWidth:16, textAlign:"center",
+        }}>
+          {badgeVal}
+        </span>
+      )}
+    </button>
+  );
+}
+

@@ -15,6 +15,9 @@ import { db }         from '../config/db.js';
 import { verifyJWT, requirePermission } from '../middleware/auth.js';
 import { validate, validateQuery, paginationSchema } from '../middleware/validate.js';
 import { nextShiftRef } from '../services/stockService.js';
+import { generateZReportPDF } from '../services/receiptService.js';
+import { sendWhatsAppText, sendWhatsAppPDF } from '../services/whatsappService.js';
+import { env } from '../config/env.js';
 
 const router = Router();
 router.use(verifyJWT);
@@ -27,7 +30,8 @@ const openShiftSchema = z.object({
 });
 
 const closeShiftSchema = z.object({
-  closing_cash: z.coerce.number().min(0),
+  closing_cash:  z.coerce.number().min(0),
+  closing_mpesa: z.coerce.number().min(0).default(0),
   notes:        z.string().max(500).optional(),
 });
 
@@ -236,19 +240,54 @@ router.post('/:id/close', requirePermission('shift'), validate(closeShiftSchema)
       [shiftId]
     );
 
-    res.json({
-      shift,
-      summary: {
-        total_sales:    parseFloat(totals[0].total_sales),
-        total_covers:   parseInt(totals[0].total_covers),
-        opening_float:  parseFloat(shiftRows[0].opening_float),
-        closing_cash,
-        expected_cash:  parseFloat(shiftRows[0].opening_float) +
-                        breakdown.filter(b => b.payment === 'cash')
-                                 .reduce((s, b) => s + parseFloat(b.amount), 0),
-        payment_breakdown: breakdown,
-      },
-    });
+    const summary = {
+      total_sales:       parseFloat(totals[0].total_sales),
+      total_covers:      parseInt(totals[0].total_covers),
+      opening_float:     parseFloat(shiftRows[0].opening_float),
+      closing_cash,
+      expected_cash:     parseFloat(shiftRows[0].opening_float) +
+                         breakdown.filter(b => b.payment === 'cash')
+                                  .reduce((s, b) => s + parseFloat(b.amount), 0),
+      payment_breakdown: breakdown,
+    };
+
+    res.json({ shift, summary });
+
+    // ── Fire-and-forget: generate Z-Report PDF and send via WhatsApp ──────────
+    if (env.ADMIN_WHATSAPP && env.WHATSAPP_TOKEN) {
+      setImmediate(async () => {
+        try {
+          const business = {
+            name:    env.BUSINESS_NAME,
+            address: env.BUSINESS_ADDRESS,
+            tel:     env.BUSINESS_TEL,
+            vat:     env.BUSINESS_VAT,
+          };
+
+          const pdfPath = await generateZReportPDF({
+            shift:   { ...shift, opened_by_name: shift.opened_by_name || 'Staff' },
+            summary,
+            business,
+          });
+
+          const variance  = closing_cash - summary.expected_cash;
+          const varText   = variance === 0 ? 'Balanced' : variance > 0 ? `Over KES ${variance}` : `Short KES ${Math.abs(variance)}`;
+          const caption   = [
+            `*Damascus Hotel — Z Report*`,
+            `Shift: ${shift.shift_ref}`,
+            `Cashier: ${shift.opened_by_name || 'Staff'}`,
+            `Date: ${new Date(shift.opened_at).toLocaleDateString('en-KE')}`,
+            `Revenue: KES ${summary.total_sales.toLocaleString()}`,
+            `Cash: ${varText}`,
+          ].join('\n');
+
+          await sendWhatsAppPDF(env.ADMIN_WHATSAPP, pdfPath, caption);
+          console.log(`📲  Z-Report sent to ${env.ADMIN_WHATSAPP}`);
+        } catch (e) {
+          console.error('WhatsApp Z-Report send failed:', e.message);
+        }
+      });
+    }
   } catch (err) { next(err); }
 });
 

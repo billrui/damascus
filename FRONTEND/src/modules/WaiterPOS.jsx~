@@ -54,8 +54,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
         const tPersons = next[tbl] || [];
         const pending = holdList.filter(h => h.table === tbl && h.status === "pending");
         const toRemove = tPersons.filter(p => {
-          // Never remove the currently active person — they may be mid-order
-          if (tbl === table && p === person) return false;
           const hasPending = pending.some(h =>
             (Array.isArray(h.items) ? h.items
               : (()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})())
@@ -250,16 +248,10 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     };
     // Optimistic update
     setHoldList(p => [hold, ...p]);
-    // Clear current person cart
+    // Clear only current person cart
     setCart([]);
     setModal("kitchen_sent");
-    setTimeout(() => {
-      setModal(null);
-      // Auto-suggest next person if others have empty carts
-      const allP = persons[table] || [];
-      const nextEmpty = allP.find(p => p !== person && !(carts[key(table, p)]||[]).length);
-      if (nextEmpty) setPerson(nextEmpty);
-    }, 1200);
+    setTimeout(() => setModal(null), 2200);
     try {
       const { posApi } = await import("../api/index.js");
       const saved = await posApi.createHold({
@@ -274,37 +266,21 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
 
   const handleAddToHold = async hold => {
     if (!cart.length) return;
-    // Create a NEW separate hold for these items — keeps each send independent in kitchen
     const newItems = cart.map(c=>({
-      menu_item_id:String(c.id), name:c.name, qty:c.qty, price:c.price, note:"["+person+"] "+(c.note||""),
+      menu_item_id:String(c.id), name:c.name, qty:c.qty, price:c.price,
+      note:"["+person+"] "+(c.note||""),
     }));
-    const newSub   = newItems.reduce((s,i)=>s+i.price*i.qty,0);
-    const newTotal = newSub + newSub*TAX + newSub*SVC;
-    const tempId   = "HOLD-" + Date.now();
-    const newHold  = {
-      id:          tempId,
-      table:       hold.table || hold.table_no,
-      waiter:      user.name,
-      createdDate: new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),
-      items:       newItems,
-      total:       newTotal,
-      status:      "pending",
-    };
-    setHoldList(p => [newHold, ...p]);
+    const updItems = [...hold.items, ...newItems];
+    const newTotal = updItems.reduce((s,i)=>s+i.price*i.qty,0);
+    setHoldList(p=>p.map(h=>h.id===hold.id?{...h,items:updItems,total:newTotal,status:"pending"}:h));
     setCart([]);
     setEditHold(null);
     setModal("kitchen_sent");
     setTimeout(()=>setModal(null),2200);
     try {
       const { posApi } = await import("../api/index.js");
-      const saved = await posApi.createHold({
-        table_no: hold.table || hold.table_no,
-        items:    newItems,
-        total:    newTotal,
-        notes:    "Waiter: " + user.name,
-      });
-      setHoldList(p => p.map(h => h.id === tempId ? { ...h, id: saved.id } : h));
-    } catch(e) { console.error("Add to kitchen failed:", e); }
+      await posApi.updateHold(hold.id,{items:updItems,total:newTotal,status:"pending"});
+    } catch(e) { console.error(e); }
   };
 
   const handleBill = async hold => {
@@ -384,22 +360,23 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
         {/* Header */}
         <div style={{padding:"10px 12px",borderBottom:"1px solid "+T.border}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.amber}}>WAITER POS</div>
-            <div style={{fontSize:10,color:T.textMuted}}>{user.name} · {new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
+            <div style={{fontSize:16,fontWeight:800,color:T.amber}}>WAITER POS</div>
+            <div style={{fontSize:12,color:T.textMuted}}>{user.name} · {new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
           </div>
 
           {/* Table grid */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
             {TABLES.map(t => {
               const hasPending = holdList.some(h=>h.table===t&&h.status==="pending");
               const hasBumped  = holdList.some(h=>h.table===t&&h.status==="bumped");
               const isActive   = table===t;
               return (
                 <button key={t} onClick={()=>switchTable(t)} style={{
-                  padding:"14px 6px",borderRadius:8,cursor:"pointer",fontSize:15,fontWeight:800,minHeight:56,
+                  padding:"10px 4px",borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:700,
                   border:"1px solid "+(isActive?T.amber:hasBumped?T.green:hasPending?T.amber+"55":T.border),
                   background:isActive?T.amber:hasBumped?T.green+"22":hasPending?T.amber+"15":T.card,
                   color:isActive?T.bg:hasBumped?T.green:hasPending?T.amber:T.textSecondary,
+                  minHeight:44,
                 }}>{t==="WALK-IN"?"WALK":t}</button>
               );
             })}
@@ -408,16 +385,8 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
 
         {/* Persons panel */}
         <div style={{flexShrink:0,maxHeight:260,overflowY:"auto",padding:"8px 12px",borderBottom:"1px solid "+T.border}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:10,fontWeight:700,color:T.textSecondary,letterSpacing:0.5}}>
-              {table==="WALK-IN"?"WALK-IN":"TABLE "+table} — {tablePersons.length} PERSON{tablePersons.length!==1?"S":""}
-            </div>
-            {tablePersons.length>0&&tablePersons.length<MAX_PAX&&(
-              <button onClick={addPerson} style={{
-                padding:"4px 12px",borderRadius:12,fontSize:11,fontWeight:700,
-                border:"1px solid "+T.amber,background:T.amber+"18",color:T.amber,cursor:"pointer",
-              }}>+ Add</button>
-            )}
+          <div style={{fontSize:11,fontWeight:700,color:T.textMuted,marginBottom:8}}>
+            {table==="WALK-IN"?"WALK-IN CUSTOMERS:":"TABLE "+table+" — PERSONS:"}
           </div>
 
           {/* Empty state — no persons added yet */}
@@ -459,20 +428,15 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 }}>
                   {/* ── Person header — click to select/expand ── */}
                   <div onClick={()=>setPerson(p)}
-                    style={{
-                      display:"flex",alignItems:"center",gap:6,
-                      padding:"12px 12px",cursor:"pointer",
-                      background: isAct ? T.amber+"08" : "transparent",
-                    }}>
+                    style={{display:"flex",alignItems:"center",gap:6,padding:"12px 10px",cursor:"pointer"}}>
                     {/* Person pill */}
                     <span style={{
-                      padding:"10px 20px",borderRadius:20,fontSize:16,fontWeight:800,
-                      border:"2px solid "+(isAct?T.amber:T.border),
+                      padding:"8px 14px",borderRadius:20,fontSize:13,fontWeight:700,
+                      border:"1px solid "+(isAct?T.amber:T.border),
                       background:isAct?T.amber:"transparent",
                       color:isAct?T.bg:T.textSecondary,
-                      flexShrink:0,letterSpacing:0.5,
+                      flexShrink:0,
                     }}>{p}</span>
-                    {isAct && <span style={{fontSize:9,fontWeight:700,color:T.amber,letterSpacing:0.5}}>ACTIVE</span>}
                     {/* Summary badges */}
                     <div style={{flex:1,display:"flex",gap:4,flexWrap:"wrap"}}>
                       {cartCount>0&&(
@@ -507,11 +471,11 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                       {/* ── Unsent cart items ── */}
                       {pItems.length>0&&(
                         <div style={{padding:"6px 8px 4px"}}>
-                          <div style={{fontSize:9,fontWeight:700,color:T.amber,marginBottom:4}}>🛒 NOT YET SENT</div>
+                          <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>NOT YET SENT</div>
                           {pItems.map(item=>(
                             <div key={item.id} style={{
                               display:"flex",alignItems:"center",gap:6,
-                              padding:"3px 0",fontSize:11,
+                              padding:"6px 0",fontSize:13,
                               borderBottom:"1px solid "+T.border+"33",
                             }}>
                               <span style={{color:T.amber,fontWeight:700,minWidth:18}}>{item.qty}×</span>
@@ -527,7 +491,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                       {/* ── Sent-to-kitchen orders for this person ── */}
                       {sentItems.length>0&&(
                         <div style={{padding:"6px 8px 4px",borderTop:pItems.length>0?"1px solid "+T.border+"44":"none"}}>
-                          <div style={{fontSize:9,fontWeight:700,color:T.green,marginBottom:4}}>🍳 IN KITCHEN</div>
+                          <div style={{fontSize:12,fontWeight:700,color:T.green,marginBottom:6}}>IN KITCHEN</div>
                           {/* Group sent items by hold */}
                           {tableHolds.filter(h=>h.status==="pending").map(h=>{
                             const hItems=(Array.isArray(h.items)?h.items:(()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})());
@@ -544,17 +508,17 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                                   background:T.green+"12",padding:"5px 8px",
                                   display:"flex",justifyContent:"space-between",alignItems:"center",
                                 }}>
-                                  <span style={{fontSize:9,fontWeight:700,color:T.green}}>🍳 Sent · {h.createdDate}</span>
+                                  <span style={{fontSize:11,fontWeight:700,color:T.green}}>Sent · {h.createdDate}</span>
                                   <div style={{display:"flex",gap:4}}>
                                     {/* Edit — add more to this order */}
                                     <button onClick={()=>{setEditHold(h);setPerson(p);}} style={{
-                                      padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,
+                                      padding:"8px 14px",borderRadius:5,fontSize:12,fontWeight:700,
                                       border:"1px solid "+T.amber,background:T.amber+"18",
                                       color:T.amber,cursor:"pointer",
                                     }}>+ Edit</button>
                                     {/* Cancel order with prompt */}
                                     <button onClick={()=>setCancelTarget(h)} style={{
-                                      padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,
+                                      padding:"8px 14px",borderRadius:5,fontSize:12,fontWeight:700,
                                       border:"1px solid "+T.red,background:T.red+"18",
                                       color:T.red,cursor:"pointer",
                                     }}>✕ Cancel</button>
@@ -593,35 +557,39 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               );
             })}
 
-
+            {/* Add person — only when persons already exist */}
+            {tablePersons.length>0&&tablePersons.length<MAX_PAX&&(
+              <button onClick={addPerson} style={{
+                padding:"10px 8px",borderRadius:8,
+                border:"1px dashed "+T.border,
+                background:"transparent",color:T.textMuted,
+                fontSize:13,cursor:"pointer",width:"100%",
+              }}>+ Add Person</button>
+            )}
           </div>
         </div>
 
         {/* Cart for current person */}
         {person&&(<>
-        <div style={{
-          padding:"8px 12px",
-          background: editHold ? T.green+"12" : T.amber+"12",
-          borderTop:"2px solid "+(editHold?T.green:T.amber),
-          display:"flex",justifyContent:"space-between",alignItems:"center",
-        }}>
+        <div style={{padding:"6px 12px 4px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:10,fontWeight:600,color:T.textMuted}}>
-              {editHold?"Adding to":"Taking order for"}
-            </span>
+            {/* Table pill */}
             <span style={{
-              padding:"4px 14px",borderRadius:20,fontSize:13,fontWeight:800,
-              background:editHold?T.green:T.amber,
-              color:T.bg,letterSpacing:0.5,
-            }}>{person}</span>
-            <span style={{
-              padding:"2px 8px",borderRadius:5,fontSize:11,fontWeight:700,
-              border:"1px solid "+T.border,background:T.card,color:T.textSecondary,
+              padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:700,
+              border:"1px solid "+T.amber,background:T.amber,color:T.bg,
             }}>{table==="WALK-IN"?"WALK":table}</span>
+            {/* Person pill */}
+            <span style={{
+              padding:"2px 8px",borderRadius:20,fontSize:10,fontWeight:700,
+              border:"1px solid "+T.amber+"55",background:T.amber+"18",color:T.amber,
+            }}>{person}</span>
+            <span style={{fontSize:9,color:T.textMuted}}>
+              {editHold?"ADDING ITEMS":"NEW ORDER"}
+            </span>
           </div>
           <div style={{display:"flex",gap:6}}>
-            {editHold&&<button onClick={()=>setEditHold(null)} style={{fontSize:11,color:T.red,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Cancel</button>}
-            {!editHold&&cart.length>0&&<button onClick={()=>setCart([])} style={{fontSize:11,color:T.red,background:T.card,border:"1px solid "+T.border,borderRadius:4,cursor:"pointer",fontWeight:700,padding:"3px 10px"}}>Clear</button>}
+            {editHold&&<button onClick={()=>setEditHold(null)} style={{fontSize:13,color:T.red,background:T.card,border:"1px solid "+T.border,borderRadius:4,cursor:"pointer",fontWeight:700,padding:"6px 14px"}}>Cancel</button>}
+            {!editHold&&cart.length>0&&<button onClick={()=>setCart([])} style={{fontSize:13,color:T.red,background:T.card,border:"1px solid "+T.border,borderRadius:4,cursor:"pointer",fontWeight:700,padding:"6px 14px"}}>Clear all</button>}
           </div>
         </div>
 
@@ -636,17 +604,17 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               <div style={{fontSize:20,width:26,textAlign:"center"}}>{item.emoji||"🍽"}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
-                {item.note&&<div style={{fontSize:10,color:T.amber,fontStyle:"italic"}}>📝 {item.note}</div>}
-                <div style={{fontSize:11,color:T.textMuted}}>KES {fmt(item.price)}</div>
+                {item.note&&<div style={{fontSize:12,color:T.amber,fontStyle:"italic"}}>{item.note}</div>}
+                <div style={{fontSize:13,color:T.textMuted}}>KES {fmt(item.price)}</div>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:4}}>
                 <button onClick={()=>updateQty(item.id,-1)} style={stepBtn(T.card)}>-</button>
-                <span style={{color:T.amber,fontWeight:800,fontSize:13,minWidth:16,textAlign:"center"}}>{item.qty}</span>
+                <span style={{color:T.amber,fontWeight:800,fontSize:18,minWidth:36,textAlign:"center"}}>{item.qty}</span>
                 <button onClick={()=>updateQty(item.id,1)} style={stepBtn(T.amber)}>+</button>
               </div>
               <div style={{textAlign:"right",minWidth:48}}>
                 <div style={{fontSize:12,fontWeight:700}}>KES {fmt(item.price*item.qty)}</div>
-                <button onClick={()=>{setNoteTarget(item.id);setNoteText(item.note||"");}} style={{fontSize:9,color:T.textMuted,background:"none",border:"none",cursor:"pointer"}}>note</button>
+                <button onClick={()=>{setNoteTarget(item.id);setNoteText(item.note||"");}} style={{fontSize:13,color:T.textMuted,background:T.card,border:"1px solid "+T.border,borderRadius:4,cursor:"pointer",padding:"6px 12px",fontWeight:600}}>Note</button>
               </div>
               <button onClick={()=>removeItem(item.id)} style={{background:"none",border:"none",cursor:"pointer",color:T.textFaint,fontSize:14}}>×</button>
             </div>
@@ -660,7 +628,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
                 {[["Subtotal",subtotal],["Tax 16%",tax],["Total",grandTotal]].map(([l,v])=>(
                   <div key={l} style={{textAlign:"center"}}>
-                    <div style={{fontSize:9,color:T.textMuted,marginBottom:2}}>{l}</div>
+                    <div style={{fontSize:11,color:T.textMuted,marginBottom:3}}>{l}</div>
                     <div style={{fontSize:l==="Total"?13:11,fontWeight:l==="Total"?800:600,color:l==="Total"?T.amber:T.textPrimary}}>KES {fmt(v)}</div>
                   </div>
                 ))}
@@ -672,7 +640,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               </button>
             ):(
               <button onClick={handleSendKitchen} style={{width:"100%",padding:"11px",borderRadius:10,border:"none",cursor:"pointer",background:"linear-gradient(135deg,"+T.amber+",#d97706)",color:T.bg,fontWeight:800,fontSize:13,fontFamily:T.font}}>
-                SEND {person} TO KITCHEN
+                🍳 SEND TO KITCHEN
               </button>
             )}
           </div>
@@ -806,7 +774,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                       return (
                         <div key={s} style={{borderTop:"1px solid "+T.border,padding:"10px 16px"}}>
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                            <span style={{padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:700,border:"1px solid "+T.green+"55",background:T.green+"15",color:T.green}}>{s}</span>
+                            <span style={{padding:"8px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid "+T.green+"55",background:T.green+"15",color:T.green}}>{s}</span>
                             <div style={{display:"flex",gap:6}}>
                               {/* Add More — opens modal with existing order + mini menu */}
                               <button onClick={()=>setAddMoreTarget({hold:h, person:s, existing:pItems, extraCart:[]})} style={{

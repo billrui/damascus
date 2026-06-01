@@ -296,3 +296,90 @@ function itemRow(doc, name, qty, price, total) {
   doc.text(total, MARGIN + c1+c2+c3,    y, { width: c4, align: 'right' });
   doc.moveDown(0.25);
 }
+
+// ─── Z-Report PDF for shift close ─────────────────────────────────────────────
+export async function generateZReportPDF({ shift, summary, business }) {
+  const storageDir = path.resolve(env.RECEIPT_STORAGE_PATH || './receipts');
+  fs.mkdirSync(storageDir, { recursive: true });
+
+  const filename = `zreport-${shift.shift_ref || shift.id}-${Date.now()}.pdf`;
+  const filepath = path.join(storageDir, filename);
+
+  const TAX    = parseFloat(env.TAX_RATE || '0.16');
+  const SVC    = parseFloat(env.SVC_RATE || '0.02');
+  const total  = parseFloat(summary?.total_sales || 0);
+  const taxAmt = Math.round(total / (1 + TAX + SVC) * TAX);
+  const svcAmt = Math.round(total / (1 + TAX + SVC) * SVC);
+  const net    = total - taxAmt - svcAmt;
+  const exp    = parseFloat(summary?.expected_cash || 0);
+  const closing = parseFloat(shift.closing_cash || 0);
+  const variance = closing - exp;
+  const pay = { cash:0, mpesa:0, split:0 };
+  (summary?.payment_breakdown || []).forEach(b => {
+    pay[b.payment] = (pay[b.payment] || 0) + parseFloat(b.amount || 0);
+  });
+
+  await new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size:[226,800], margin:MARGIN, autoFirstPage:true });
+    const stream = fs.createWriteStream(filepath);
+    doc.pipe(stream);
+    stream.on('finish', resolve);
+    stream.on('error',  reject);
+
+    const W = CONTENT_W;
+    const dash = () => doc.font('Helvetica').fontSize(7).text('-'.repeat(36), { width:W, align:'center' });
+    const row  = (label, val, bold=false) => {
+      doc.font(bold?'Helvetica-Bold':'Helvetica').fontSize(8);
+      const y = doc.y;
+      doc.text(label, MARGIN, y, { width:W*0.6 });
+      doc.text(val,   MARGIN+W*0.6, y, { width:W*0.4, align:'right' });
+    };
+
+    doc.font('Helvetica-Bold').fontSize(11).text(business.name||'Damascus Hotel', MARGIN, MARGIN, { width:W, align:'center' });
+    doc.font('Helvetica').fontSize(7.5)
+       .text(business.address||'', { width:W, align:'center' })
+       .text(business.tel||'',     { width:W, align:'center' });
+    doc.moveDown(0.3);
+    doc.font('Helvetica-Bold').fontSize(9).text('Z - REPORT', { width:W, align:'center' });
+    doc.font('Helvetica').fontSize(7.5)
+       .text(`Shift: ${shift.shift_ref||shift.id}`, { width:W, align:'center' })
+       .text(`Date: ${new Date(shift.opened_at).toLocaleDateString('en-KE')}`, { width:W, align:'center' })
+       .text(`Cashier: ${shift.opened_by_name||''}`, { width:W, align:'center' })
+       .text(`Open: ${new Date(shift.opened_at).toTimeString().slice(0,5)}  Close: ${new Date(shift.closed_at).toTimeString().slice(0,5)}`, { width:W, align:'center' });
+
+    doc.moveDown(0.5); dash();
+    doc.font('Helvetica-Bold').fontSize(8).text('SALES SUMMARY', { width:W, align:'center' });
+    dash();
+    row('Gross Revenue', `KES ${total.toLocaleString()}`, true);
+    row('Net Sales',     `KES ${net.toLocaleString()}`);
+    row(`VAT (${Math.round(TAX*100)}%)`,  `KES ${taxAmt.toLocaleString()}`);
+    row(`Service (${Math.round(SVC*100)}%)`, `KES ${svcAmt.toLocaleString()}`);
+    row('Transactions',  String(summary?.total_covers||0));
+
+    doc.moveDown(0.5); dash();
+    doc.font('Helvetica-Bold').fontSize(8).text('PAYMENT METHODS', { width:W, align:'center' });
+    dash();
+    row('Cash',   `KES ${(pay.cash||0).toLocaleString()}`);
+    row('M-Pesa', `KES ${(pay.mpesa||0).toLocaleString()}`);
+    row('Split',  `KES ${(pay.split||0).toLocaleString()}`);
+
+    doc.moveDown(0.5); dash();
+    doc.font('Helvetica-Bold').fontSize(8).text('CASH RECONCILIATION', { width:W, align:'center' });
+    dash();
+    row('Opening Float', `KES ${parseFloat(shift.opening_float||0).toLocaleString()}`);
+    row('Cash Sales',    `KES ${(pay.cash||0).toLocaleString()}`);
+    row('Expected Cash', `KES ${exp.toLocaleString()}`, true);
+    row('Actual Cash',   `KES ${closing.toLocaleString()}`, true);
+    doc.moveDown(0.2);
+    doc.font('Helvetica-Bold').fontSize(9)
+       .text(variance===0?'BALANCED':variance>0?`OVER: KES ${variance.toLocaleString()}`:`SHORT: KES ${Math.abs(variance).toLocaleString()}`, { width:W, align:'center' });
+
+    doc.moveDown(0.5); dash();
+    doc.font('Helvetica').fontSize(7)
+       .text(`Printed: ${new Date().toLocaleString('en-KE')}`, { width:W, align:'center' })
+       .text('Damascus Hotel POS', { width:W, align:'center' });
+    doc.end();
+  });
+
+  return filepath;
+}

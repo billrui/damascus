@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { TAX, SVC } from "../data";
+import { shiftsApi } from "../api/index.js";
 import { fmt } from "../utils";
 import { Card, Badge, SectionHeader, Btn } from "../components/UI";
 
@@ -18,25 +19,29 @@ export const INIT_SHIFTS = [];
 // --- HELPERS ------------------------------------------------------------------
 const payBreakdown = (sales) => {
   const out = { cash: 0, card: 0, mpesa: 0, gift: 0 };
-  sales.forEach((s) => { out[s.payment] = (out[s.payment] || 0) + s.total; });
+  (sales||[]).forEach((s) => { out[s.payment] = (out[s.payment] || 0) + s.total; });
   return out;
 };
 
-const cashSales = (sales) => sales.filter((s) => s.payment === "cash").reduce((a, s) => a + s.total, 0);
+const cashSales = (sales) => (sales||[]).filter((s) => s.payment === "cash").reduce((a, s) => a + s.total, 0);
 
-const shiftTotal = (shift) => shift.sales.reduce((a, s) => a + s.total, 0);
+const shiftTotal = (shift) => parseFloat(shift.total_sales ?? (shift.sales||[]).reduce((a, s) => a + (s.total||0), 0) ?? 0);
 
-const pettyTotal = (shift) => (shift.petty || []).reduce((a, p) => a + p.amount, 0);
+const pettyTotal = (shift) => (shift.petty || []).reduce((a, p) => a + (p.amount||0), 0);
 
 const expectedCashCalc = (shift) => {
-  const cs = cashSales(shift.sales);
-  const pt = pettyTotal(shift);
-  return shift.float + cs - pt;
+  const cs      = cashSales(shift.sales||[]);
+  const pt      = pettyTotal(shift);
+  const opening = parseFloat(shift.float ?? shift.opening_float ?? 0);
+  return opening + cs - pt;
 };
 
 const variance = (shift) => {
+  const actual = shift.actualCash ?? shift.closing_cash;
+  if (actual == null || actual === "") return null;
   const expected = expectedCashCalc(shift);
-  return shift.actualCash != null ? shift.actualCash - expected : null;
+  const result = parseFloat(actual) - expected;
+  return isNaN(result) ? null : result;
 };
 
 const fmtTime = () => {
@@ -66,58 +71,117 @@ function Toast({ msg }) {
 }
 
 // --- OPEN SHIFT MODAL ---------------------------------------------------------
-function OpenShiftModal({ user, onOpen, onClose }) {
-  const [float, setFloat] = useState("5000");
-  const [err,   setErr]   = useState("");
+export function OpenShiftModal({ user, onOpen, onClose }) {
+  const [cashFloat,  setCashFloat]  = useState("");
+  const [mpesaFloat, setMpesaFloat] = useState("");
+  const [err,        setErr]        = useState("");
+
+  const cashTotal  = parseFloat(cashFloat)  || 0;
+  const mpesaTotal = parseFloat(mpesaFloat) || 0;
+  const grandTotal = cashTotal + mpesaTotal;
 
   const handle = () => {
-    const f = parseFloat(float);
-    if (isNaN(f) || f < 0) { setErr("Enter a valid opening float amount"); return; }
-    onOpen(f);
+    if (cashTotal <= 0) { setErr("Enter the cash amount in the till before opening"); return; }
+    onOpen(cashTotal, mpesaTotal);
   };
 
+  const inputStyle = (color) => ({
+    width:"100%", padding:"13px 12px 13px 52px",
+    border:`1px solid ${color}50`, borderRadius:6,
+    fontSize:18, fontWeight:700, outline:"none",
+    boxSizing:"border-box", fontFamily:"monospace",
+    background:"#FFFFFF", color:color,
+    letterSpacing:-0.5,
+  });
+
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-      <div style={{ background:"#FFFFFF", borderRadius:8, width:"100%", maxWidth:420, boxShadow:"0 20px 40px rgba(0,0,0,0.15)", overflow:"hidden" }}>
-        <div style={{ background:DARK_BG, padding:"22px 24px 18px" }}>
-          <div style={{ fontSize:15, fontWeight:600, color:GOLD, letterSpacing:"0.5px" }}>Open New Shift</div>
-          <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
-            {user.name} - {user.role} - {new Date().toLocaleDateString("en-KE", { weekday:"long", day:"numeric", month:"long" })}
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+      <div style={{ background:"#FFFFFF", borderRadius:10, width:"100%", maxWidth:420, boxShadow:"0 24px 48px rgba(0,0,0,0.25)", overflow:"hidden" }}>
+
+        {/* Header */}
+        <div style={{ background:DARK_BG, padding:"20px 24px 16px" }}>
+          <div style={{ fontSize:15, fontWeight:700, color:GOLD, letterSpacing:"0.5px" }}>Open New Shift</div>
+          <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:3 }}>
+            {user.name} — {new Date().toLocaleDateString("en-KE", { weekday:"long", day:"numeric", month:"long" })}
           </div>
         </div>
-        <div style={{ padding:24 }}>
-          <div style={{ marginBottom:18 }}>
-            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:6, letterSpacing:"0.5px" }}>
-              Opening Float (KES) *
-            </label>
+
+        {/* Body */}
+        <div style={{ padding:"24px" }}>
+
+          {/* Cash float */}
+          <div style={{ marginBottom:20 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#4A4A4A", letterSpacing:0.5, marginBottom:8 }}>
+              Cash in Till (KES) *
+            </div>
             <div style={{ position:"relative" }}>
-              <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:11, color:"#7A7A7A", fontWeight:600 }}>KES</span>
+              <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", fontSize:12, color:"#16A34A", fontWeight:700 }}>KES</span>
               <input
-                type="number"
-                value={float}
-                onChange={(e) => { setFloat(e.target.value); setErr(""); }}
-                style={{ width:"100%", padding:"11px 12px 11px 48px", border:`1px solid ${err ? RED : "#E5E0D5"}`, borderRadius:4, fontSize:14, fontWeight:600, outline:"none", boxSizing:"border-box", fontFamily:"'Inter', sans-serif" }}
+                type="number" min="0"
+                value={cashFloat}
+                onChange={e => { setCashFloat(e.target.value); setErr(""); }}
+                placeholder="0.00"
+                style={inputStyle("#16A34A")}
               />
             </div>
-            {err && <div style={{ fontSize:10, color:RED, marginTop:4 }}>{err}</div>}
-            <div style={{ fontSize:10, color:"#7A7A7A", marginTop:5, letterSpacing:"0.3px" }}>Count cash in till and enter exact amount before starting.</div>
+            <div style={{ fontSize:10, color:"#7A7A7A", marginTop:5 }}>Count all notes and coins physically in the till</div>
           </div>
-          {/* Quick float presets */}
-          <div style={{ display:"flex", gap:8, marginBottom:20 }}>
-            {[2000,5000,10000].map((v) => (
-              <button key={v} onClick={() => setFloat(String(v))} style={{
-                flex:1, padding:"8px 0", borderRadius:4,
-                border:`1px solid ${float===String(v) ? GOLD : "#E5E0D5"}`,
-                background: float===String(v) ? "#FEF9F0" : "#FFFFFF",
-                color: float===String(v) ? GOLD : "#7A7A7A",
-                fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif",
-              }}>KES {v.toLocaleString()}</button>
-            ))}
+
+          {/* M-Pesa float */}
+          <div style={{ marginBottom:20 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#4A4A4A", letterSpacing:0.5, marginBottom:8 }}>
+              M-Pesa Till Balance (KES)
+            </div>
+            <div style={{ position:"relative" }}>
+              <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", fontSize:12, color:"#1D4ED8", fontWeight:700 }}>KES</span>
+              <input
+                type="number" min="0"
+                value={mpesaFloat}
+                onChange={e => { setMpesaFloat(e.target.value); setErr(""); }}
+                placeholder="0.00 (optional)"
+                style={inputStyle("#1D4ED8")}
+              />
+            </div>
+            <div style={{ fontSize:10, color:"#7A7A7A", marginTop:5 }}>Check your M-Pesa till account balance</div>
           </div>
+
+          {/* Total summary */}
+          {grandTotal > 0 && (
+            <div style={{
+              display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:20,
+              background:"#F8F8F8", borderRadius:8, padding:"14px 12px",
+            }}>
+              {[
+                { label:"Cash",   value:cashTotal,  color:"#16A34A" },
+                { label:"M-Pesa", value:mpesaTotal, color:"#1D4ED8" },
+                { label:"Total",  value:grandTotal,  color:ORANGE },
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:9, fontWeight:700, color:"#9CA3AF", letterSpacing:1, textTransform:"uppercase", marginBottom:4 }}>{label}</div>
+                  <div style={{ fontSize:14, fontWeight:800, color, fontFamily:"monospace" }}>
+                    {value.toLocaleString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {err && <div style={{ fontSize:11, color:RED, marginBottom:14, fontWeight:600 }}>{err}</div>}
+
+          {/* Buttons */}
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={onClose} style={{ flex:1, padding:"11px", borderRadius:4, border:"1px solid #E5E0D5", background:"#FFFFFF", fontSize:12, fontWeight:600, color:"#7A7A7A", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>Cancel</button>
-            <button onClick={handle} style={{ flex:2, padding:"11px", borderRadius:4, border:"none", background:DARK_BG, fontSize:12, fontWeight:600, color:GOLD, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
-              Open Shift
+            <button onClick={onClose} style={{ flex:1, padding:"12px", borderRadius:6, border:"1px solid #E5E0D5", background:"#FFFFFF", fontSize:12, fontWeight:600, color:"#7A7A7A", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
+              Cancel
+            </button>
+            <button onClick={handle} disabled={cashTotal <= 0} style={{
+              flex:2, padding:"12px", borderRadius:6, border:"none",
+              background: cashTotal > 0 ? DARK_BG : "#E5E0D5",
+              fontSize:13, fontWeight:700,
+              color: cashTotal > 0 ? GOLD : "#9CA3AF",
+              cursor: cashTotal > 0 ? "pointer" : "not-allowed",
+              fontFamily:"'Inter', sans-serif", transition:"all 0.15s",
+            }}>
+              Open Shift — KES {grandTotal.toLocaleString()}
             </button>
           </div>
         </div>
@@ -134,7 +198,7 @@ function PettyCashModal({ user, onAdd, onClose }) {
 
   const handle = () => {
     const e = {};
-    if (!desc.trim()) e.desc = "Description required";
+    if (!desc.trim()) e.desc = "Describe what the cash was used for";
     const a = parseFloat(amount);
     if (isNaN(a) || a <= 0) e.amount = "Enter a valid amount";
     if (Object.keys(e).length) { setErr(e); return; }
@@ -149,22 +213,59 @@ function PettyCashModal({ user, onAdd, onClose }) {
           <button onClick={onClose} style={{ width:30, height:30, borderRadius:4, border:"1px solid #E5E0D5", background:"#FFFFFF", cursor:"pointer", fontSize:13 }}>-</button>
         </div>
         <div style={{ padding:24 }}>
-          <div style={{ marginBottom:14 }}>
-            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:5, letterSpacing:"0.5px" }}>
-              Description *
+
+          {/* What was it used for */}
+          <div style={{ marginBottom:16 }}>
+            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:6, letterSpacing:"0.5px" }}>
+              Used For *
             </label>
-            <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="e.g., Market - produce"
-              style={{ width:"100%", padding:"10px 12px", border:`1px solid ${err.desc ? RED : "#E5E0D5"}`, borderRadius:4, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"'Inter', sans-serif" }} />
-            {err.desc && <div style={{ fontSize:10, color:RED, marginTop:3 }}>{err.desc}</div>}
+            <input
+              value={desc}
+              onChange={e => { setDesc(e.target.value); setErr(er => ({ ...er, desc:undefined })); }}
+              placeholder="e.g. Market — tomatoes and onions"
+              autoFocus
+              style={{
+                width:"100%", padding:"12px 14px",
+                border:`1.5px solid ${err.desc ? RED : "#E5E0D5"}`,
+                borderRadius:6, fontSize:13, outline:"none",
+                boxSizing:"border-box", fontFamily:"'Inter', sans-serif",
+              }}
+            />
+            {err.desc && <div style={{ fontSize:10, color:RED, marginTop:4 }}>{err.desc}</div>}
           </div>
+
+          {/* Amount */}
           <div style={{ marginBottom:20 }}>
-            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:5, letterSpacing:"0.5px" }}>
+            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:6, letterSpacing:"0.5px" }}>
               Amount (KES) *
             </label>
-            <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
-              style={{ width:"100%", padding:"10px 12px", border:`1px solid ${err.amount ? RED : "#E5E0D5"}`, borderRadius:4, fontSize:13, fontWeight:600, outline:"none", boxSizing:"border-box", fontFamily:"'Inter', sans-serif" }} />
-            {err.amount && <div style={{ fontSize:10, color:RED, marginTop:3 }}>{err.amount}</div>}
+            <div style={{ position:"relative" }}>
+              <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:12, color:"#7A7A7A", fontWeight:700 }}>KES</span>
+              <input
+                type="number" min="0"
+                value={amount}
+                onChange={e => { setAmount(e.target.value); setErr(er => ({ ...er, amount:undefined })); }}
+                placeholder="0.00"
+                style={{
+                  width:"100%", padding:"12px 12px 12px 50px",
+                  border:`1.5px solid ${err.amount ? RED : "#E5E0D5"}`,
+                  borderRadius:6, fontSize:16, fontWeight:700, outline:"none",
+                  boxSizing:"border-box", fontFamily:"monospace",
+                }}
+              />
+            </div>
+            {err.amount && <div style={{ fontSize:10, color:RED, marginTop:4 }}>{err.amount}</div>}
           </div>
+
+          {/* Preview */}
+          {desc.trim() && parseFloat(amount) > 0 && (
+            <div style={{ marginBottom:20, padding:"10px 14px", background:"#FEF9F0", border:"1px solid #FDE68A", borderRadius:6 }}>
+              <div style={{ fontSize:9, fontWeight:700, color:ORANGE, letterSpacing:0.5, marginBottom:3 }}>WILL BE RECORDED AS</div>
+              <div style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>{desc.trim()}</div>
+              <div style={{ fontSize:13, color:RED, fontWeight:700, marginTop:3, fontFamily:"monospace" }}>- KES {parseFloat(amount).toLocaleString()}</div>
+            </div>
+          )}
+
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={onClose} style={{ flex:1, padding:"10px", borderRadius:4, border:"1px solid #E5E0D5", background:"#FFFFFF", fontSize:12, fontWeight:600, color:"#7A7A7A", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>Cancel</button>
             <button onClick={handle} style={{ flex:2, padding:"10px", borderRadius:4, border:"none", background:GOLD, fontSize:12, fontWeight:600, color:"#FFFFFF", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
@@ -179,99 +280,128 @@ function PettyCashModal({ user, onAdd, onClose }) {
 
 // --- CLOSE SHIFT MODAL --------------------------------------------------------
 function CloseShiftModal({ shift, onClose, onConfirm }) {
-  const [actualCash, setActualCash] = useState("");
-  const [notes,      setNotes]      = useState("");
-  const [err,        setErr]        = useState("");
+  const [actualCash,  setActualCash]  = useState("");
+  const [actualMpesa, setActualMpesa] = useState("");
+  const [err,         setErr]         = useState("");
 
-  const expected = expectedCashCalc(shift);
-  const actual   = parseFloat(actualCash);
-  const diff     = !isNaN(actual) ? actual - expected : null;
+  const expectedCash  = expectedCashCalc(shift) || 0;
+  const expectedMpesa = parseFloat(shift.mpesaFloat || shift.mpesa_float || 0);
+  const mpesaSales    = payBreakdown(shift.sales||[]).mpesa || 0;
+  const expectedMpesaClose = expectedMpesa + mpesaSales;
+
+  const actualCashNum  = parseFloat(actualCash)  || 0;
+  const actualMpesaNum = parseFloat(actualMpesa) || 0;
+
+  const cashDiff  = actualCash  !== "" ? actualCashNum  - expectedCash       : null;
+  const mpesaDiff = actualMpesa !== "" ? actualMpesaNum - expectedMpesaClose : null;
 
   const handle = () => {
-    const a = parseFloat(actualCash);
-    if (isNaN(a) || a < 0) { setErr("Enter actual cash counted"); return; }
-    onConfirm(a, notes);
+    if (actualCash === "" || isNaN(parseFloat(actualCash)) || parseFloat(actualCash) < 0) {
+      setErr("Enter the actual cash counted in the till");
+      return;
+    }
+    onConfirm(actualCashNum, actualMpesaNum);
+  };
+
+  const VarBadge = ({ diff }) => {
+    if (diff === null) return null;
+    const color = diff === 0 ? GREEN : diff > 0 ? "#1D4ED8" : RED;
+    const bg    = diff === 0 ? "#ECFDF5" : diff > 0 ? "#EFF6FF" : "#FEF2F2";
+    const bd    = diff === 0 ? "#D1FAE5" : diff > 0 ? "#BFDBFE" : "#FECACA";
+    return (
+      <div style={{ borderRadius:6, padding:"10px 14px", marginTop:10, background:bg, border:`1px solid ${bd}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontSize:11, fontWeight:600, color }}>
+          {diff === 0 ? "Balanced" : diff > 0 ? `Over by KES ${diff.toLocaleString()}` : `Short by KES ${Math.abs(diff).toLocaleString()}`}
+        </span>
+        <span style={{ fontSize:15, fontWeight:800, color, fontFamily:"monospace" }}>
+          {diff > 0 ? "+" : ""}{diff.toLocaleString()}
+        </span>
+      </div>
+    );
   };
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
       <div style={{ background:"#FFFFFF", borderRadius:8, width:"100%", maxWidth:480, maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 40px rgba(0,0,0,0.15)" }}>
-        <div style={{ background:DARK_BG, padding:"22px 24px 18px", borderRadius:"8px 8px 0 0" }}>
-          <div style={{ fontSize:15, fontWeight:600, color:GOLD, letterSpacing:"0.5px" }}>Close Shift</div>
+
+        {/* Header */}
+        <div style={{ background:DARK_BG, padding:"20px 24px 16px", borderRadius:"8px 8px 0 0" }}>
+          <div style={{ fontSize:15, fontWeight:700, color:GOLD, letterSpacing:"0.5px" }}>Close Shift</div>
           <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
-            {shift.cashier} - Opened {shift.openedAt} - {new Date().toLocaleDateString("en-KE")}
+            {shift.cashier || shift.opened_by_name || "Staff"} — Opened {shift.openedAt||""} — {new Date().toLocaleDateString("en-KE")}
           </div>
         </div>
 
         <div style={{ flex:1, overflowY:"auto", padding:24 }}>
+
           {/* Expected summary */}
-          <div style={{ background:"#F8F8F8", borderRadius:6, padding:16, marginBottom:20 }}>
-            <div style={{ fontSize:10, fontWeight:600, color:"#7A7A7A", letterSpacing:0.5, marginBottom:12, textTransform:"uppercase" }}>
-              Expected Till Count
+          <div style={{ background:"#F8F8F8", borderRadius:6, padding:14, marginBottom:20 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:"#7A7A7A", letterSpacing:0.5, marginBottom:10, textTransform:"uppercase" }}>
+              Expected Counts
             </div>
             {[
-              ["Opening Float",   `KES ${shift.float.toLocaleString()}`,           "#4A4A4A"],
-              ["Cash Sales",      `KES ${cashSales(shift.sales).toLocaleString()}`, GREEN],
-              ["Petty Cash Out",  `- KES ${pettyTotal(shift).toLocaleString()}`,    RED],
-              ["Expected Cash",   `KES ${expected.toLocaleString()}`,               DARK_BG],
+              ["Opening Float",   `KES ${(parseFloat(shift.float||shift.opening_float||0)||0).toLocaleString()}`, "#4A4A4A"],
+              ["Cash Sales",      `KES ${(cashSales(shift.sales||[])||0).toLocaleString()}`,                      GREEN],
+              ["Petty Cash Out",  `- KES ${(pettyTotal(shift)||0).toLocaleString()}`,                             RED],
+              ["Expected Cash",   `KES ${(expectedCash||0).toLocaleString()}`,                                    DARK_BG],
             ].map(([label, val, color]) => (
-              <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:label==="Petty Cash Out"?"1px solid #E5E0D5":"none" }}>
+              <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", borderBottom:label==="Petty Cash Out"?"1px solid #E5E0D5":"none" }}>
                 <span style={{ fontSize:11, color:"#7A7A7A" }}>{label}</span>
-                <span style={{ fontSize:12, fontWeight:600, color }}>{val}</span>
+                <span style={{ fontSize:11, fontWeight:600, color }}>{val}</span>
               </div>
             ))}
-          </div>
-
-          {/* Actual cash input */}
-          <div style={{ marginBottom:16 }}>
-            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:6, letterSpacing:"0.5px" }}>
-              Actual Cash in Till (KES) *
-            </label>
-            <input
-              type="number"
-              value={actualCash}
-              onChange={(e) => { setActualCash(e.target.value); setErr(""); }}
-              placeholder="Count and enter total cash"
-              style={{ width:"100%", padding:"12px", border:`1px solid ${err ? RED : "#E5E0D5"}`, borderRadius:4, fontSize:15, fontWeight:600, outline:"none", boxSizing:"border-box", fontFamily:"'Inter', monospace" }}
-            />
-            {err && <div style={{ fontSize:10, color:RED, marginTop:4 }}>{err}</div>}
-          </div>
-
-          {/* Live variance indicator */}
-          {diff !== null && (
-            <div style={{
-              borderRadius:6, padding:"12px 16px", marginBottom:16,
-              background: diff === 0 ? "#ECFDF5" : diff > 0 ? "#EFF6FF" : "#FEF2F2",
-              border: `1px solid ${diff === 0 ? "#D1FAE5" : diff > 0 ? "#BFDBFE" : "#FECACA"}`,
-              display:"flex", alignItems:"center", justifyContent:"space-between",
-            }}>
-              <span style={{ fontSize:12, fontWeight:600, color: diff===0 ? GREEN : diff>0 ? "#1D4ED8" : RED }}>
-                {diff === 0 ? "Till Balanced" : diff > 0 ? `Over by KES ${diff.toLocaleString()}` : `Short by KES ${Math.abs(diff).toLocaleString()}`}
-              </span>
-              <span style={{ fontSize:16, fontWeight:700, color: diff===0?GREEN:diff>0?"#1D4ED8":RED }}>
-                {diff > 0 ? "+" : ""}{diff.toLocaleString()}
-              </span>
+            <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid #E5E0D5", display:"flex", justifyContent:"space-between" }}>
+              <span style={{ fontSize:11, color:"#7A7A7A" }}>Expected M-Pesa</span>
+              <span style={{ fontSize:11, fontWeight:600, color:"#1D4ED8" }}>KES {(expectedMpesaClose||0).toLocaleString()}</span>
             </div>
-          )}
-
-          {/* Notes */}
-          <div style={{ marginBottom:4 }}>
-            <label style={{ fontSize:11, fontWeight:600, color:"#4A4A4A", display:"block", marginBottom:6, letterSpacing:"0.5px" }}>
-              Shift Notes <span style={{ fontWeight:400, color:"#7A7A7A" }}>(optional)</span>
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Handover notes for next cashier..."
-              style={{ width:"100%", padding:"10px 12px", border:"1px solid #E5E0D5", borderRadius:4, fontSize:12, outline:"none", resize:"none", boxSizing:"border-box", fontFamily:"'Inter', sans-serif" }}
-            />
           </div>
+
+          {/* Cash section */}
+          <div style={{ marginBottom:20 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#4A4A4A", letterSpacing:0.5, marginBottom:8 }}>
+              Actual Cash in Till (KES) *
+            </div>
+            <div style={{ position:"relative" }}>
+              <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:12, color:"#16A34A", fontWeight:700 }}>KES</span>
+              <input
+                type="number" min="0"
+                value={actualCash}
+                onChange={e => { setActualCash(e.target.value); setErr(""); }}
+                placeholder="Count all notes and coins"
+                autoFocus
+                style={{ width:"100%", padding:"12px 12px 12px 50px", border:`1.5px solid ${err ? RED : cashDiff===null?"#E5E0D5":cashDiff===0?"#22C55E":cashDiff>0?"#93C5FD":"#FCA5A5"}`, borderRadius:6, fontSize:16, fontWeight:700, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }}
+              />
+            </div>
+            {err && <div style={{ fontSize:10, color:RED, marginTop:4 }}>{err}</div>}
+            <VarBadge diff={cashDiff} />
+          </div>
+
+          {/* M-Pesa section */}
+          <div style={{ marginBottom:8 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#4A4A4A", letterSpacing:0.5, marginBottom:8 }}>
+              Actual M-Pesa Till Balance (KES)
+            </div>
+            <div style={{ position:"relative" }}>
+              <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:12, color:"#1D4ED8", fontWeight:700 }}>KES</span>
+              <input
+                type="number" min="0"
+                value={actualMpesa}
+                onChange={e => setActualMpesa(e.target.value)}
+                placeholder="Check M-Pesa till account balance (optional)"
+                style={{ width:"100%", padding:"12px 12px 12px 50px", border:`1.5px solid ${mpesaDiff===null?"#BFDBFE":mpesaDiff===0?"#22C55E":mpesaDiff>0?"#93C5FD":"#FCA5A5"}`, borderRadius:6, fontSize:16, fontWeight:700, outline:"none", boxSizing:"border-box", fontFamily:"monospace", color:"#1D4ED8" }}
+              />
+            </div>
+            <VarBadge diff={mpesaDiff} />
+          </div>
+
         </div>
 
+        {/* Footer */}
         <div style={{ padding:"16px 24px", borderTop:"1px solid #F0EDE6", display:"flex", gap:10 }}>
-          <button onClick={onClose} style={{ flex:1, padding:"11px", borderRadius:4, border:"1px solid #E5E0D5", background:"#FFFFFF", fontSize:12, fontWeight:600, color:"#7A7A7A", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>Cancel</button>
-          <button onClick={handle} style={{ flex:2, padding:"11px", borderRadius:4, border:"none", background:RED, fontSize:12, fontWeight:600, color:"#FFFFFF", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
+          <button onClick={onClose} style={{ flex:1, padding:"12px", borderRadius:6, border:"1px solid #E5E0D5", background:"#FFFFFF", fontSize:12, fontWeight:600, color:"#7A7A7A", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
+            Cancel
+          </button>
+          <button onClick={handle} style={{ flex:2, padding:"12px", borderRadius:6, border:"none", background:RED, fontSize:13, fontWeight:700, color:"#FFFFFF", cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
             Close Shift
           </button>
         </div>
@@ -282,15 +412,21 @@ function CloseShiftModal({ shift, onClose, onConfirm }) {
 
 // --- Z-REPORT MODAL -----------------------------------------------------------
 function ZReportModal({ shift, onClose }) {
-  const pay     = payBreakdown(shift.sales);
+  const pay     = payBreakdown(shift.sales||[]);
   const total   = shiftTotal(shift);
   const taxAmt  = Math.round(total / (1 + TAX + SVC) * TAX);
   const svcAmt  = Math.round(total / (1 + TAX + SVC) * SVC);
   const netSales= total - taxAmt - svcAmt;
-  const exp     = expectedCashCalc(shift);
-  const diff    = shift.actualCash != null ? shift.actualCash - exp : null;
-  const ptTotal = pettyTotal(shift);
-  const voidTotal = (shift.voids||[]).reduce((a,v)=>a+v.amount,0);
+  const exp         = expectedCashCalc(shift) || 0;
+  const actualCash  = parseFloat(shift.actualCash ?? shift.closing_cash ?? null);
+  const actualMpesa = parseFloat(shift.actualMpesa ?? shift.closing_mpesa ?? 0);
+  const mpesaSales  = pay.mpesa || 0;
+  const mpesaOpen   = parseFloat(shift.mpesaFloat ?? shift.mpesa_float ?? 0);
+  const expMpesa    = mpesaOpen + mpesaSales;
+  const cashDiff    = !isNaN(actualCash)  ? actualCash  - exp      : null;
+  const mpesaDiff   = actualMpesa > 0     ? actualMpesa - expMpesa : null;
+  const ptTotal     = pettyTotal(shift);
+  const voidTotal   = (shift.voids||[]).reduce((a,v)=>a+(v.amount||0), 0);
 
   const Row = ({ label, val, bold, color, border }) => (
     <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom: border ? "1px solid #E5E0D5" : "none" }}>
@@ -308,7 +444,7 @@ function ZReportModal({ shift, onClose }) {
           <div style={{ fontSize:10, color:GOLD, fontWeight:600, letterSpacing:2, marginBottom:4, textTransform:"uppercase" }}>Z-REPORT</div>
           <div style={{ fontSize:17, fontWeight:600, color:"#FFFFFF", letterSpacing:"0.5px" }}>DAMASCUS HOTEL</div>
           <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
-            {shift.date} - {shift.openedAt} - {shift.closedAt || "Open"} - {shift.cashier}
+            {shift.date} - {shift.openedAt} - {shift.closedAt || "Open"} - {shift.cashier || shift.opened_by_name || "Staff"}
           </div>
           <div style={{ fontSize:10, color:"rgba(255,255,255,0.3)", marginTop:1 }}>Shift: {shift.id}</div>
         </div>
@@ -322,7 +458,7 @@ function ZReportModal({ shift, onClose }) {
             <Row label="Net Sales"        val={`KES ${netSales.toLocaleString()}`}  />
             <Row label={`VAT (${(TAX*100).toFixed(0)}%)`} val={`KES ${taxAmt.toLocaleString()}`} />
             <Row label={`Service (${(SVC*100).toFixed(0)}%)`} val={`KES ${svcAmt.toLocaleString()}`} border />
-            <Row label="Total Transactions" val={shift.sales.length} bold />
+            <Row label="Total Transactions" val={(shift.sales||[]).length} bold />
             <Row label="Discounts Given"  val={`KES ${(shift.discounts||0).toLocaleString()}`} color={RED} />
             <Row label="Void Amount"      val={`KES ${voidTotal.toLocaleString()}`} color={RED} />
           </div>
@@ -351,22 +487,53 @@ function ZReportModal({ shift, onClose }) {
           {/* Cash Reconciliation */}
           <div style={{ marginBottom:20 }}>
             <div style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", letterSpacing:1, marginBottom:8, textTransform:"uppercase" }}>Cash Reconciliation</div>
-            <Row label="Opening Float"  val={`KES ${shift.float.toLocaleString()}`} />
+            <Row label="Opening Float"  val={`KES ${(parseFloat(shift.float||shift.opening_float||0)||0).toLocaleString()}`} />
             <Row label="Cash Sales"     val={`KES ${(pay.cash||0).toLocaleString()}`} />
-            <Row label="Petty Cash Out" val={`- KES ${ptTotal.toLocaleString()}`} color={RED} border />
-            <Row label="Expected Cash"  val={`KES ${exp.toLocaleString()}`} bold />
-            {diff !== null && (
+            <Row label="Petty Cash Out" val={`- KES ${(ptTotal||0).toLocaleString()}`} color={RED} border />
+            <Row label="Expected Cash"  val={`KES ${(exp||0).toLocaleString()}`} bold />
+            {cashDiff !== null && (
               <Row
                 label="Actual Cash Counted"
-                val={`KES ${shift.actualCash.toLocaleString()}`}
-                bold color={diff === 0 ? GREEN : diff > 0 ? "#C5A059" : RED}
+                val={`KES ${(actualCash||0).toLocaleString()}`}
+                bold color={cashDiff===0 ? GREEN : cashDiff>0 ? "#1D4ED8" : RED}
               />
             )}
-            {diff !== null && (
-              <div style={{ marginTop:8, padding:"10px 12px", borderRadius:4, background: diff===0 ? "#ECFDF5" : diff>0 ? "#EFF6FF" : "#FEF2F2", border:`1px solid ${diff===0 ? "#D1FAE5" : diff>0 ? "#BFDBFE" : "#FECACA"}` }}>
-                <span style={{ fontSize:11, fontWeight:600, color: diff===0 ? GREEN : diff>0 ? "#C5A059" : RED }}>
-                  {diff === 0 ? "Balanced" : diff > 0 ? `Over KES ${diff.toLocaleString()}` : `Short KES ${Math.abs(diff).toLocaleString()}`}
+            {cashDiff !== null && (
+              <div style={{ marginTop:6, padding:"10px 12px", borderRadius:4,
+                background: cashDiff===0?"#ECFDF5":cashDiff>0?"#EFF6FF":"#FEF2F2",
+                border:`1px solid ${cashDiff===0?"#D1FAE5":cashDiff>0?"#BFDBFE":"#FECACA"}` }}>
+                <span style={{ fontSize:11, fontWeight:700, color:cashDiff===0?GREEN:cashDiff>0?"#1D4ED8":RED }}>
+                  Cash: {cashDiff===0?"Balanced":cashDiff>0?`Over KES ${cashDiff.toLocaleString()}`:`Short KES ${Math.abs(cashDiff).toLocaleString()}`}
                 </span>
+              </div>
+            )}
+          </div>
+
+          {/* M-Pesa Reconciliation */}
+          <div style={{ marginBottom:20 }}>
+            <div style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", letterSpacing:1, marginBottom:8, textTransform:"uppercase" }}>M-Pesa Reconciliation</div>
+            <Row label="Opening M-Pesa Float" val={`KES ${(mpesaOpen||0).toLocaleString()}`} />
+            <Row label="M-Pesa Sales"         val={`KES ${(mpesaSales||0).toLocaleString()}`} color="#1D4ED8" border />
+            <Row label="Expected M-Pesa"      val={`KES ${(expMpesa||0).toLocaleString()}`} bold />
+            {mpesaDiff !== null && (
+              <Row
+                label="Actual M-Pesa Balance"
+                val={`KES ${(actualMpesa||0).toLocaleString()}`}
+                bold color={mpesaDiff===0?GREEN:mpesaDiff>0?"#1D4ED8":RED}
+              />
+            )}
+            {mpesaDiff !== null && (
+              <div style={{ marginTop:6, padding:"10px 12px", borderRadius:4,
+                background: mpesaDiff===0?"#ECFDF5":mpesaDiff>0?"#EFF6FF":"#FEF2F2",
+                border:`1px solid ${mpesaDiff===0?"#D1FAE5":mpesaDiff>0?"#BFDBFE":"#FECACA"}` }}>
+                <span style={{ fontSize:11, fontWeight:700, color:mpesaDiff===0?GREEN:mpesaDiff>0?"#1D4ED8":RED }}>
+                  M-Pesa: {mpesaDiff===0?"Balanced":mpesaDiff>0?`Over KES ${mpesaDiff.toLocaleString()}`:`Short KES ${Math.abs(mpesaDiff).toLocaleString()}`}
+                </span>
+              </div>
+            )}
+            {mpesaDiff === null && (
+              <div style={{ fontSize:10, color:"#9CA3AF", fontStyle:"italic", marginTop:4 }}>
+                M-Pesa closing balance not recorded
               </div>
             )}
           </div>
@@ -378,7 +545,7 @@ function ZReportModal({ shift, onClose }) {
               {(shift.petty||[]).map((p) => (
                 <div key={p.id} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:"1px solid #F0EDE6" }}>
                   <span style={{ fontSize:11, color:"#4A4A4A" }}>{p.time} - {p.desc}</span>
-                  <span style={{ fontSize:11, fontWeight:600, color:RED }}>- KES {p.amount.toLocaleString()}</span>
+                  <span style={{ fontSize:11, fontWeight:600, color:RED }}>- KES {(p.amount||0).toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -402,7 +569,7 @@ function ZReportModal({ shift, onClose }) {
             <div style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", letterSpacing:1, marginBottom:8, textTransform:"uppercase" }}>Top Items</div>
             {(() => {
               const counts = {};
-              shift.sales.forEach((s) => s.items.forEach((i) => { counts[i.menuId] = (counts[i.menuId]||0) + i.qty; }));
+              (shift.sales||[]).forEach((s) => s.items.forEach((i) => { counts[i.menuId] = (counts[i.menuId]||0) + i.qty; }));
               return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([id,qty]) => {
                 const m = menuItems.find((x)=>x.id===id);
                 return m ? (
@@ -436,7 +603,7 @@ function ZReportModal({ shift, onClose }) {
 
 // --- SHIFT DETAIL MODAL -------------------------------------------------------
 function ShiftDetailModal({ shift, onZReport, onClose }) {
-  const pay   = payBreakdown(shift.sales);
+  const pay   = payBreakdown(shift.sales||[]);
   const total = shiftTotal(shift);
   const diff  = variance(shift);
 
@@ -446,7 +613,7 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
         <div style={{ padding:"20px 24px 14px", borderBottom:"1px solid #F0EDE6", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div>
             <div style={{ fontSize:14, fontWeight:600, color:"#1A1A1A", letterSpacing:"0.5px" }}>{shift.id}</div>
-            <div style={{ fontSize:10, color:"#7A7A7A", marginTop:2 }}>{shift.date} - {shift.cashier} - {shift.openedAt}-{shift.closedAt}</div>
+            <div style={{ fontSize:10, color:"#7A7A7A", marginTop:2 }}>{shift.date} - {shift.cashier||shift.opened_by_name||"Staff"} - {shift.openedAt}-{shift.closedAt}</div>
           </div>
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             <button onClick={onZReport} style={{ padding:"6px 14px", borderRadius:4, border:"none", background:DARK_BG, fontSize:11, fontWeight:600, color:GOLD, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>Z-Report</button>
@@ -457,10 +624,10 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
           {/* KPIs */}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:20 }}>
             {[
-              { label:"Revenue", val:`KES ${total.toLocaleString()}`, color:"#1A1A1A" },
-              { label:"Orders",  val:shift.sales.length,              color:"#C5A059" },
+              { label:"Revenue", val:`KES ${(total||0).toLocaleString()}`, color:"#1A1A1A" },
+              { label:"Orders",  val:(shift.sales||[]).length,              color:"#C5A059" },
               { label:diff===null?"Float":diff===0?"Balanced":diff>0?"Over":"Short",
-                val: diff===null?`KES ${shift.float.toLocaleString()}`:diff===0?"KES 0":`${diff>0?"+":""}KES ${diff.toLocaleString()}`,
+                val: diff===null?`KES ${(parseFloat(shift.float||shift.opening_float||0)).toLocaleString()}`:diff===0?"KES 0":`${diff>0?"+":""}KES ${diff.toLocaleString()}`,
                 color: diff===null?"#1A1A1A":diff===0?GREEN:diff>0?"#C5A059":RED },
             ].map((k)=>(
               <Card key={k.label} style={{ padding:12, textAlign:"center" }}>
@@ -488,7 +655,7 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
           {/* Transaction list */}
           <div>
             <div style={{ fontSize:10, fontWeight:600, color:"#7A7A7A", marginBottom:8, letterSpacing:"0.5px", textTransform:"uppercase" }}>
-              Transactions ({shift.sales.length})
+              Transactions ({(shift.sales||[]).length})
             </div>
             <div style={{ overflowY:"auto", maxHeight:240 }}>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
@@ -500,8 +667,8 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {shift.sales.map((s,i)=>(
-                    <tr key={s.id} style={{ borderBottom:i<shift.sales.length-1?"1px solid #F0EDE6":"none" }}>
+                  {(shift.sales||[]).map((s,i)=>(
+                    <tr key={s.id} style={{ borderBottom:i<(shift.sales||[]).length-1?"1px solid #F0EDE6":"none" }}>
                       <td style={{ padding:"6px 10px", fontWeight:600, fontSize:11 }}>{s.id}</td>
                       <td style={{ padding:"6px 10px", color:"#7A7A7A", fontSize:11 }}>{s.time}</td>
                       <td style={{ padding:"6px 10px", color:"#7A7A7A", fontSize:11 }}>{s.items.reduce((a,x)=>a+x.qty,0)}</td>
@@ -543,9 +710,9 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
 function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
   const [showPetty,  setShowPetty]  = useState(false);
   const [showZReport,setShowZReport]= useState(false);
-  const total = shiftTotal(shift);
-  const pay   = payBreakdown(shift.sales);
-  const exp   = expectedCashCalc(shift);
+  const total = shiftTotal(shift) || 0;
+  const pay   = payBreakdown(shift.sales||[]);
+  const exp   = expectedCashCalc(shift) || 0;
   const pt    = pettyTotal(shift);
 
   const addPetty = (entry) => {
@@ -560,9 +727,9 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
           <span style={{ width:8, height:8, borderRadius:"50%", background:"#22C55E", display:"inline-block", boxShadow:"0 0 0 2px rgba(34,197,94,0.2)" }} />
           <div>
-            <div style={{ color:GOLD, fontWeight:600, fontSize:12, letterSpacing:"0.5px" }}>ACTIVE SHIFT - {shift.id}</div>
+            <div style={{ color:GOLD, fontWeight:600, fontSize:12, letterSpacing:"0.5px" }}>ACTIVE SHIFT - {shift.ref||shift.shift_ref||shift.id}</div>
             <div style={{ color:"rgba(255,255,255,0.4)", fontSize:9 }}>
-              Opened {shift.openedAt} - Float KES {shift.float.toLocaleString()} - {shift.cashier}
+              Opened {shift.openedAt||""} - Float KES {(parseFloat(shift.float||shift.opening_float||0)).toLocaleString()} - {shift.cashier||shift.opened_by_name||"Staff"}
             </div>
           </div>
         </div>
@@ -582,10 +749,10 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
       {/* Live stats */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:1, background:"#F0EDE6" }}>
         {[
-          { label:"Revenue",   val:`KES ${total.toLocaleString()}`,              color:"#1A1A1A" },
-          { label:"Orders",    val:shift.sales.length,                           color:"#C5A059" },
-          { label:"Cash in Till", val:`KES ${exp.toLocaleString()}`,             color:GREEN },
-          { label:"Petty Out", val:`KES ${pt.toLocaleString()}`,                  color:pt>0?RED:"#7A7A7A" },
+          { label:"Revenue",      val:`KES ${(isNaN(total)?0:total).toLocaleString()}`,  color:"#1A1A1A" },
+          { label:"Orders",       val:(shift.sales||[]).length,                                                    color:"#C5A059" },
+          { label:"Cash in Till", val:`KES ${(isNaN(exp)?0:exp).toLocaleString()}`,      color:GREEN },
+          { label:"M-Pesa Float", val:`KES ${(parseFloat(shift.mpesaFloat||shift.mpesa_float||0)||0).toLocaleString()}`, color:"#1D4ED8" },
         ].map((k)=>(
           <div key={k.label} style={{ background:"#FFFFFF", padding:"14px 16px" }}>
             <div style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", letterSpacing:0.5, marginBottom:4, textTransform:"uppercase" }}>{k.label}</div>
@@ -599,13 +766,13 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
         {[["Cash", pay.cash || 0, GREEN], ["Card", pay.card || 0, "#C5A059"], ["M-Pesa", pay.mpesa || 0, "#2E7D64"], ["Gift", pay.gift || 0, "#8B3A3A"]].map(([l,v,c])=>(
           <div key={l}>
             <div style={{ fontSize:9, color:"#7A7A7A", fontWeight:600, letterSpacing:"0.5px" }}>{l}</div>
-            <div style={{ fontSize:12, fontWeight:600, color:v>0?c:"#D1D5DB" }}>KES {v.toLocaleString()}</div>
+            <div style={{ fontSize:12, fontWeight:600, color:v>0?c:"#D1D5DB" }}>KES {(v||0).toLocaleString()}</div>
           </div>
         ))}
         {(shift.petty||[]).length>0 && (
           <div style={{ marginLeft:"auto" }}>
             <div style={{ fontSize:9, color:"#7A7A7A", fontWeight:600, letterSpacing:"0.5px" }}>Petty Cash ({shift.petty.length} entries)</div>
-            <div style={{ fontSize:12, fontWeight:600, color:RED }}>-KES {pt.toLocaleString()}</div>
+            <div style={{ fontSize:12, fontWeight:600, color:RED }}>-KES {(pt||0).toLocaleString()}</div>
           </div>
         )}
       </div>
@@ -646,7 +813,55 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
-  // -- Sync live sales into active shift --------------------------------------
+  // -- Load shifts from backend on mount -------------------------------------
+  useEffect(() => {
+    const loadShifts = async () => {
+      try {
+        const [historyData, activeData] = await Promise.all([
+          shiftsApi.list({ limit: 50, status: "all" }),
+          shiftsApi.active(),
+        ]);
+        // Only set from backend if we don't have local data
+        if ((historyData?.shifts?.length || 0) > 0 && shifts.length === 0) {
+          setShifts(historyData.shifts.map(s => ({
+            id:       s.id, ref: s.shift_ref,
+            date:     s.opened_at?.split("T")[0],
+            cashier:  s.opened_by_name,
+            openedAt: s.opened_at ? new Date(s.opened_at).toTimeString().slice(0,5) : "",
+            closedAt: s.closed_at ? new Date(s.closed_at).toTimeString().slice(0,5) : null,
+            float:    parseFloat(s.opening_float || 0),
+            status:   s.status,
+            total_sales: parseFloat(s.total_sales || 0),
+            total_covers: parseInt(s.total_covers || 0),
+            sales: [], voids: [], discounts: 0, petty: [],
+            actualCash: s.closing_cash ? parseFloat(s.closing_cash) : null,
+            notes: s.notes,
+            _dbId: s.id,
+          })));
+        }
+        if (activeData && !activeShift) {
+          setActiveShift({
+            id:       activeData.id, ref: activeData.shift_ref,
+            date:     activeData.opened_at?.split("T")[0] || ds(0),
+            cashier:  activeData.opened_by_name || user.name,
+            openedAt: activeData.opened_at ? new Date(activeData.opened_at).toTimeString().slice(0,5) : "",
+            closedAt: null,
+            float:      parseFloat(activeData.opening_float || 0),
+            mpesaFloat: parseFloat(activeData.mpesa_float || 0),
+            status:     "open",
+            sales:      sales.filter(s => s.date === ds(0)),
+            voids: [], discounts: 0, petty: [],
+            _dbId:      activeData.id,
+          });
+        }
+      } catch(e) {
+        console.warn("Could not load shifts from backend:", e.message);
+      }
+    };
+    loadShifts();
+  }, []);
+
+  // -- Sync live sales into active shift -------------------------------------
   useEffect(() => {
     if (!activeShift) return;
     const today = ds(0);
@@ -658,50 +873,90 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
   }, [sales]);
 
   // -- Open Shift --
-  const handleOpenShift = (float) => {
-    const now = fmtTime();
-    const newShift = {
-      id:        `SHF-${String(Date.now()).slice(-4)}`,
-      date:      ds(0),
-      cashier:   user.name,
-      openedAt:  now,
-      closedAt:  null,
-      float,
-      status:    "open",
-      sales:     [...sales.filter((s) => s.date === ds(0))],
-      voids:     [],
-      discounts: 0,
-      petty:     [],
-    };
-    setActiveShift(newShift);
-    setModal(null);
-    showToast(`Shift ${newShift.id} opened at ${now}`);
+  const handleOpenShift = async (float, mpesaFloat = 0) => {
+    if (user.role === "manager") return;
+    try {
+      const shift = await shiftsApi.open({ opening_float: float, mpesa_float: mpesaFloat });
+      // Normalize to local shape
+      const normalized = {
+        id:        shift.id,
+        ref:       shift.shift_ref,
+        date:      shift.opened_at?.split("T")[0] || ds(0),
+        cashier:   shift.opened_by_name || user.name,
+        openedAt:  shift.opened_at ? new Date(shift.opened_at).toTimeString().slice(0,5) : fmtTime(),
+        closedAt:  null,
+        float:      parseFloat(shift.opening_float || float),
+        mpesaFloat: parseFloat(shift.mpesa_float || mpesaFloat || 0),
+        status:    "open",
+        sales:     [...sales.filter((s) => s.date === ds(0))],
+        voids:     [],
+        discounts: 0,
+        petty:     [],
+        _dbId:     shift.id,
+      };
+      setActiveShift(normalized);
+      setModal(null);
+      showToast(`Shift ${shift.shift_ref} opened`);
+    } catch (err) {
+      // Conflict — shift already open
+      if (err?.response?.status === 409) {
+        showToast("A shift is already open — refreshing...");
+        try {
+          const existing = await shiftsApi.active();
+          if (existing) {
+            setActiveShift({
+              id: existing.id, ref: existing.shift_ref,
+              date: existing.opened_at?.split("T")[0] || ds(0),
+              cashier: existing.opened_by_name || user.name,
+              openedAt: existing.opened_at ? new Date(existing.opened_at).toTimeString().slice(0,5) : "",
+              closedAt: null,
+              float:      parseFloat(existing.opening_float || 0),
+              mpesaFloat: parseFloat(existing.mpesa_float || 0),
+              status: "open", sales: [], voids: [], discounts: 0, petty: [],
+              _dbId: existing.id,
+            });
+          }
+        } catch(_) {}
+        setModal(null);
+      } else {
+        showToast(`Failed to open shift: ${err?.response?.data?.message || err.message}`);
+      }
+    }
   };
 
   // -- Close Shift --
-  const handleCloseShift = (actualCash, notes) => {
-    const closed = {
-      ...activeShift,
-      closedAt:   fmtTime(),
-      actualCash,
-      notes,
-      status:     "closed",
-    };
-    setShifts((prev) => [closed, ...prev]);
-    setActiveShift(null);
-    setModal(null);
-    showToast(`Shift ${closed.id} closed. ${variance(closed) === 0 ? "Till balanced" : variance(closed) > 0 ? `Over KES ${variance(closed)}` : `Short KES ${Math.abs(variance(closed))}`}`);
-    setDetailShift(closed);
-    setModal("zreport");
+  const handleCloseShift = async (actualCash, actualMpesa = 0) => {
+    try {
+      const dbId = activeShift._dbId || activeShift.id;
+      const result = await shiftsApi.close(dbId, { closing_cash: actualCash, closing_mpesa: actualMpesa });
+      const closed = {
+        ...activeShift,
+        closedAt:    fmtTime(),
+        actualCash,
+        actualMpesa,
+        status:      "closed",
+        // Merge backend summary
+        _summary:   result.summary,
+      };
+      setShifts((prev) => [closed, ...prev]);
+      setActiveShift(null);
+      setModal(null);
+      const v = variance(closed);
+      showToast(`Shift closed. ${v === 0 ? "Till balanced" : v > 0 ? `Over KES ${v}` : `Short KES ${Math.abs(v)}`}`);
+      setDetailShift(closed);
+      setModal("zreport");
+    } catch (err) {
+      showToast(`Failed to close shift: ${err?.response?.data?.message || err.message}`);
+    }
   };
 
   // -- Summary chart data --
   const summaryData = shifts.slice(0, 7).reverse().map((s) => ({
-    name: `${s.cashier.split(" ")[0]} ${s.openedAt}`,
+    name: `${(s.cashier || s.opened_by_name || "Staff").split(" ")[0]} ${s.openedAt || ""}`,
     revenue: shiftTotal(s),
-    cash:    payBreakdown(s.sales).cash || 0,
-    card:    payBreakdown(s.sales).card || 0,
-    mpesa:   payBreakdown(s.sales).mpesa || 0,
+    cash:    payBreakdown(s.sales||[]).cash || 0,
+    card:    payBreakdown(s.sales||[]).card || 0,
+    mpesa:   payBreakdown(s.sales||[]).mpesa || 0,
     short:   variance(s) < 0 ? Math.abs(variance(s)) : 0,
     over:    variance(s) > 0 ? variance(s) : 0,
   }));
@@ -723,6 +978,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
         />
         <div style={{ display:"flex", gap:12, alignItems:"center" }}>
           {/* Tab switcher */}
+          {(user.role === "admin" || user.role === "manager") && (
           <div style={{ display:"flex", background:"#FFFFFF", border:"1px solid #E5E0D5", borderRadius:4, padding:3, gap:3 }}>
             {[["history","History"],["summary","Summary"]].map(([id,label])=>(
               <button key={id} onClick={() => setTab(id)} style={{
@@ -733,7 +989,8 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
               }}>{label}</button>
             ))}
           </div>
-          {!activeShift && (
+        )}
+          {!activeShift && user.role !== "manager" && (
             <button
               onClick={() => setModal("open")}
               style={{ padding:"8px 20px", borderRadius:4, border:"none", background:DARK_BG, color:GOLD, fontSize:12, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontFamily:"'Inter', sans-serif" }}
@@ -756,8 +1013,8 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
         </div>
       )}
 
-      {/* -- HISTORY TAB -- */}
-      {tab === "history" && (
+      {/* -- HISTORY TAB — managers and admins only -- */}
+      {tab === "history" && (user.role === "admin" || user.role === "manager") && (
         <>
           {/* Filter bar */}
           <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
@@ -830,7 +1087,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                 </thead>
                 <tbody>
                   {filteredShifts.map((s, i) => {
-                    const pay  = payBreakdown(s.sales);
+                    const pay  = payBreakdown(s.sales||[]);
                     const tot  = shiftTotal(s);
                     const diff = variance(s);
                     return (
@@ -840,10 +1097,10 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                       >
                         <td style={{ padding:"9px 12px", fontSize:11, fontWeight:600, color:"#C5A059" }}>{s.id}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#7A7A7A" }}>{s.date}</td>
-                        <td style={{ padding:"9px 12px", fontSize:11 }}>{s.cashier.split(" ")[0]}</td>
+                        <td style={{ padding:"9px 12px", fontSize:11 }}>{(s.cashier || s.opened_by_name || "Staff").split(" ")[0]}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#7A7A7A", fontFamily:"monospace" }}>{s.openedAt}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#7A7A7A", fontFamily:"monospace" }}>{s.closedAt||"-"}</td>
-                        <td style={{ padding:"9px 12px", fontSize:11, textAlign:"center" }}>{s.sales.length}</td>
+                        <td style={{ padding:"9px 12px", fontSize:11, textAlign:"center" }}>{(s.sales||[]).length}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, fontWeight:600 }}>KES {tot.toLocaleString()}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:GREEN }}>KES {(pay.cash||0).toLocaleString()}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#C5A059" }}>KES {(pay.card||0).toLocaleString()}</td>
@@ -885,8 +1142,8 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
         </>
       )}
 
-      {/* -- SUMMARY TAB -- */}
-      {tab === "summary" && (
+      {/* -- SUMMARY TAB — managers and admins only -- */}
+      {tab === "summary" && (user.role === "admin" || user.role === "manager") && (
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
           <Card>
             <SectionHeader title="Revenue per Shift" />
@@ -936,12 +1193,13 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                 {(() => {
                   const byName = {};
                   shifts.forEach((s)=>{
-                    if (!byName[s.cashier]) byName[s.cashier]={ shifts:0, revenue:0, balanced:0, issues:0 };
-                    byName[s.cashier].shifts++;
-                    byName[s.cashier].revenue += shiftTotal(s);
+                    const sName = s.cashier || s.opened_by_name || "Staff";
+                    if (!byName[sName]) byName[s.cashier]={ shifts:0, revenue:0, balanced:0, issues:0 };
+                    byName[sName].shifts++;
+                    byName[sName].revenue += shiftTotal(s);
                     const v = variance(s);
-                    if (v===0) byName[s.cashier].balanced++;
-                    else if (v!==null) byName[s.cashier].issues++;
+                    if (v===0) byName[sName].balanced++;
+                    else if (v!==null) byName[sName].issues++;
                   });
                   return Object.entries(byName).map(([name,d], i)=>(
                     <tr key={name} style={{ borderBottom:i<Object.keys(byName).length-1?"1px solid #F0EDE6":"none" }}>

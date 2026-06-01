@@ -28,6 +28,9 @@ export function AppProvider({ children }) {
 
   // -- App data ----------------------------------------------------------------
   const [users,       setUsers]       = useState([]);
+  // Track deleted user ids so bootstrap/re-fetch never restores them
+  const removedUserIds = useState(() => new Set())[0];
+  const removedInvIds  = useState(() => new Set())[0];
   const [menuItems,   setMenuItems]   = useState([]);
   const [ingredients, setIngredients] = useState([]);
   const [batches,     setBatches]     = useState([]);
@@ -108,7 +111,7 @@ export function AppProvider({ children }) {
         has("pos") || has("shift") ? posApi.invoices().catch(() => []) : Promise.resolve([]),
       ]);
 
-      setUsers(usersData);
+      setUsers(usersData.filter(u => !removedUserIds.has(String(u.id))));
       setMenuItems(itemsData);
       setIngredients(ingredientsData);
       setBatches(batchesData.batches || []);
@@ -165,33 +168,15 @@ export function AppProvider({ children }) {
   });
 
   // -- Poll invoices for cashier every 5s as socket fallback ------------------
-  // Tracks invoice ids that were locally removed (paid/cleared) so the poll
-  // never restores them before the next full page load.
-  const removedInvIds = useState(() => new Set())[0];
-
-  // Expose a wrapped setter that also records removals
-  const setOpenInvoicesWrapped = useCallback((updater) => {
-    setOpenInvoices(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      // Detect removals: ids in prev but not in next
-      const prevIds = new Set(prev.map(i => String(i.id)));
-      const nextIds = new Set(next.map(i => String(i.id)));
-      prevIds.forEach(id => { if (!nextIds.has(id)) removedInvIds.add(id); });
-      return next;
-    });
-  }, [removedInvIds]);
-
   useEffect(() => {
-    if (!user || user.role !== "cashier") return;
+    if (!user || user.role !== 'cashier') return;
     const poll = async () => {
       try {
         const fresh = await posApi.invoices();
         if (!Array.isArray(fresh)) return;
-        // Never restore invoices that were locally removed this session
         setOpenInvoices(prev => {
           const filtered = fresh.filter(inv => !removedInvIds.has(String(inv.id)));
-          // Merge: keep local state for invoices already present, add new ones
-          const prevMap = new Map(prev.map(i => [String(i.id), i]));
+          const prevMap   = new Map(prev.map(i => [String(i.id), i]));
           return filtered.map(inv => prevMap.get(String(inv.id)) || inv);
         });
       } catch(e) {}
@@ -199,7 +184,7 @@ export function AppProvider({ children }) {
     poll();
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
-  }, [user?.id, removedInvIds]);
+  }, [user?.id]);
 
   // -- Login --------------------------------------------------------------------
   const login = useCallback(async (userId, pin, deviceId) => {
@@ -250,13 +235,38 @@ export function AppProvider({ children }) {
 
   const allowedNav = ALL_NAV.filter(n => (user?.permissions || []).includes(n.id));
 
+  const setUsersWrapped = useCallback((updater) => {
+    setUsers(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      setTimeout(() => {
+        const prevIds = new Set(prev.map(u => String(u.id)));
+        const nextIds = new Set(next.map(u => String(u.id)));
+        prevIds.forEach(id => { if (!nextIds.has(id)) removedUserIds.add(id); });
+      }, 0);
+      return next;
+    });
+  }, []);
+
+  const setOpenInvoicesWrapped = useCallback((updater) => {
+    setOpenInvoices(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      setTimeout(() => {
+        const prevIds = new Set(prev.map(i => String(i.id)));
+        const nextIds = new Set(next.map(i => String(i.id)));
+        prevIds.forEach(id => { if (!nextIds.has(id)) removedInvIds.add(id); });
+      }, 0);
+      return next;
+    });
+  }, []);
+
   return (
     <AppContext.Provider value={{
       // Auth
       user, authLoading, authError, login, logout,
 
       // Data
-      users, setUsers,
+      users,
+      setUsers: setUsersWrapped,
       menuItems, setMenuItems,
       ingredients, setIngredients,
       batches, setBatches,

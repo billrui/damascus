@@ -80,15 +80,18 @@ export function requireRole(...roles) {
  * Usage: router.get('/inventory', verifyJWT, requirePermission('inventory'), handler)
  */
 export function requirePermission(permId) {
+  // permId can be a string or array of strings (any match grants access)
+  const required = Array.isArray(permId) ? permId : [permId];
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     const perms = req.user.permissions || [];
-    if (!perms.includes(permId)) {
+    const allowed = req.user.role === 'admin' || required.some(p => perms.includes(p));
+    if (!allowed) {
       return res.status(403).json({
         error: 'Forbidden',
-        message: `Missing permission: ${permId}`,
+        message: `Missing permission: ${required.join(' or ')}`,
       });
     }
     next();

@@ -100,13 +100,13 @@ export function initSocketServer(httpServer) {
 /** New hold/order created — notify KDS and managers */
 export function emitHoldCreated(hold) {
   if (!io) return;
-  io.to('kitchen').to('managers').emit('hold:created', hold);
+  io.to('kitchen').to('managers').to('pos').emit('hold:created', hold);
 }
 
 /** Hold status changed (billed, bumped, cancelled) */
 export function emitHoldUpdated(hold) {
   if (!io) return;
-  io.to('kitchen').to('managers').emit('hold:updated', hold);
+  io.to('kitchen').to('managers').to('pos').emit('hold:updated', hold);
 }
 
 /** Hold removed */

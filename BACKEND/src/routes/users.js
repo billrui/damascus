@@ -23,7 +23,7 @@ const createUserSchema = z.object({
   role:        z.enum(VALID_ROLES),
   pin:         z.string().min(4).max(8),
   permissions: z.array(z.string()).optional(),
-  avatar:      z.string().max(10).optional(),
+  avatar:      z.string().max(200000).optional(), // base64 image
 });
 
 const updateUserSchema = z.object({
@@ -32,7 +32,7 @@ const updateUserSchema = z.object({
   pin:         z.string().min(4).max(8).optional(),
   permissions: z.array(z.string()).optional(),
   active:      z.boolean().optional(),
-  avatar:      z.string().max(10).optional(),
+  avatar:      z.string().max(200000).optional(), // base64 image
 });
 
 // Role hierarchy — who can manage whom

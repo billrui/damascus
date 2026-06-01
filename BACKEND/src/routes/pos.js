@@ -82,6 +82,7 @@ const holdSchema = z.object({
     name:         z.string(),
     qty:          z.coerce.number().int().min(1),
     price:        z.coerce.number(),
+    note:         z.string().max(500).optional(),
   })).min(1),
   total:     z.coerce.number(),
   notes:     z.string().max(500).optional(),
@@ -429,6 +430,7 @@ router.get('/receipts/:id/escpos', requirePermission('pos'), async (req, res, ne
 // ─── POST /api/pos/holds ──────────────────────────────────────────────────────
 router.post('/holds', requirePermission('pos'), validate(holdSchema), async (req, res, next) => {
   try {
+    console.log('🔍 HOLD ITEMS RECEIVED:', JSON.stringify(req.body.items?.slice(0,2)));
     const { table_no, items, total, notes } = req.body;
 
     const hold = await db.transaction(async (client) => {
@@ -484,7 +486,7 @@ router.get('/holds', requirePermission('pos'), async (req, res, next) => {
 });
 
 // ─── PATCH /api/pos/holds/:id ────────────────────────────────────────────────
-router.patch('/holds/:id', requirePermission('pos'), validate(updateHoldSchema), async (req, res, next) => {
+router.patch('/holds/:id', requirePermission(['pos','kds']), validate(updateHoldSchema), async (req, res, next) => {
   try {
     const { status, notes } = req.body;
 

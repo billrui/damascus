@@ -39,6 +39,29 @@ const UserIcon = ({ size = 20, color = "#666" }) => (
   </svg>
 );
 
+// Renders staff photo or colored initial
+const AvatarBubble = ({ user, size = 28, roleColor }) => {
+  const initial = user?.name?.charAt(0).toUpperCase() || "?";
+  const hasPhoto = user?.avatar && user.avatar.startsWith("data:");
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: "50%", flexShrink: 0, overflow: "hidden",
+      background: hasPhoto ? "transparent" : (roleColor ? `${roleColor}20` : "#eee"),
+      border: `1px solid ${roleColor || "#ccc"}30`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      {hasPhoto ? (
+        <img src={user.avatar} alt={user.name}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      ) : (
+        <span style={{ fontSize: size * 0.42, fontWeight: 700, color: roleColor || "#888" }}>
+          {initial}
+        </span>
+      )}
+    </div>
+  );
+};
+
 const ChevronIcon = ({ open }) => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
     stroke="#666" strokeWidth="2.5" strokeLinecap="round"
@@ -56,7 +79,10 @@ export default function LoginScreen({ onLogin }) {
   const [error,        setError]        = useState("");
   const [shake,        setShake]        = useState(false);
   const [loading,      setLoading]      = useState(false);
-  const dropRef = useRef(null);
+  const [logoTaps,     setLogoTaps]     = useState(0);
+  const [adminMode,    setAdminMode]    = useState(false);
+  const dropRef      = useRef(null);
+  const logoTapTimer = useRef(null);
   const { time, date } = useClock();
 
   useEffect(() => {
@@ -71,7 +97,40 @@ export default function LoginScreen({ onLogin }) {
 
   useEffect(() => { setPin(""); setError(""); setShake(false); }, [selectedUser]);
 
-  const activeUsers = users.filter(u => u.active !== false);
+  // When entering admin mode, auto-select the admin user
+  useEffect(() => {
+    if (adminMode && adminUser) setSelectedUser(adminUser);
+    if (!adminMode) setSelectedUser(null);
+  }, [adminMode]);
+
+  // Secret: tap hotel logo 5 times within 3 seconds to reveal admin login
+  const handleLogoTap = () => {
+    const next = logoTaps + 1;
+    setLogoTaps(next);
+    clearTimeout(logoTapTimer.current);
+    if (next >= 5) {
+      setAdminMode(true);
+      setLogoTaps(0);
+      setSelectedUser(null);
+      setPin("");
+      setError("");
+    } else {
+      logoTapTimer.current = setTimeout(() => setLogoTaps(0), 3000);
+    }
+  };
+
+  const exitAdminMode = () => {
+    setAdminMode(false);
+    setSelectedUser(null);
+    setPin("");
+    setError("");
+    setLogoTaps(0);
+  };
+
+  // Staff list — admin hidden from normal login
+  const activeUsers = users.filter(u => u.active !== false && u.role !== "admin");
+  // Admin user — used only in admin mode
+  const adminUser = users.find(u => u.role === "admin");
   const meta = selectedUser ? (ROLE_META[selectedUser.role] || ROLE_META.cashier) : null;
 
   const handleKey = async (k) => {
@@ -113,24 +172,50 @@ export default function LoginScreen({ onLogin }) {
     );
   }
 
-  // -- No users --------------------------------------------------------------
-  if (activeUsers.length === 0) {
+  // -- No users — but admin may still need to log in -------------------------
+  if (activeUsers.length === 0 && !adminMode) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0c0f18" }}>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0c0f18", flexDirection: "column", gap: 0 }}>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <div style={{ background: "#fff", padding: 40, borderRadius: 12, textAlign: "center", maxWidth: 340, margin: "0 16px" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>-</div>
-          <h2 style={{ margin: "0 0 8px", fontSize: 18, fontFamily: T.font }}>No staff accounts yet</h2>
-          <p style={{ color: "#888", fontSize: 13, marginBottom: 20, lineHeight: 1.6 }}>
-            Create staff accounts from the backend before logging in.
-          </p>
-          <code style={{ display: "block", background: "#f5f5f5", padding: "8px 12px", borderRadius: 6, fontSize: 12, marginBottom: 20 }}>
-            POST /api/users
-          </code>
-          <button onClick={() => { setFetching(true); fetchPublicUsers().then(setUsers).finally(() => setFetching(false)); }}
-            style={{ padding: "10px 24px", background: "#2d9e6b", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: T.font }}>
-            Retry
-          </button>
+
+
+        {/* Damascus logo — tap 5x to reveal admin login */}
+        <div
+          onClick={handleLogoTap}
+          style={{
+            marginTop: 32, display: "flex", flexDirection: "column",
+            alignItems: "center", gap: 10, cursor: "default",
+            userSelect: "none", WebkitTapHighlightColor: "transparent",
+            opacity: 0.35, transition: "opacity 0.2s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.opacity = 0.5}
+          onMouseLeave={e => e.currentTarget.style.opacity = 0.35}
+        >
+          <div style={{
+            width: 48, height: 48,
+            background: "linear-gradient(145deg, #a07830, #c9a84c, #7a5c1e)",
+            borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 0 0 4px rgba(201,168,76,0.1)",
+            transform: "rotate(45deg)",
+          }}>
+            <div style={{ transform: "rotate(-45deg)" }}>
+              <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+                <path d="M16 4L28 16L16 28L4 16L16 4Z" fill="rgba(12,15,24,0.85)"/>
+                <path d="M16 9L23 16L16 23L9 16L16 9Z" fill="#e8c96a" opacity="0.7"/>
+              </svg>
+            </div>
+          </div>
+          <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontWeight: 600, fontSize: 15, color: "#c9a84c", letterSpacing: 4 }}>
+            Damascus
+          </div>
+          <div style={{ fontSize: 8, color: "#c9a84c", letterSpacing: 6, marginTop: -6 }}>HOTEL</div>
+
+          {/* Tap counter hint */}
+          {logoTaps >= 2 && logoTaps < 5 && (
+            <div style={{ fontSize: 9, color: "rgba(201,168,76,0.5)", letterSpacing: 1, marginTop: 4 }}>
+              {5 - logoTaps} more tap{5 - logoTaps !== 1 ? "s" : ""}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -189,8 +274,8 @@ export default function LoginScreen({ onLogin }) {
           </svg>
         </div>
 
-        {/* Brand */}
-        <div style={{ position: "relative", zIndex: 1, textAlign: "center", animation: "fadeUp .9s ease both" }}>
+        {/* Brand — tap 5x to reveal admin login */}
+        <div onClick={handleLogoTap} style={{ position: "relative", zIndex: 1, textAlign: "center", animation: "fadeUp .9s ease both", cursor: "default", userSelect: "none" }}>
           <div style={{
             width: 72, height: 72, margin: "0 auto 24px",
             background: `linear-gradient(145deg, #a07830, ${T.amber}, #7a5c1e)`,
@@ -251,11 +336,26 @@ export default function LoginScreen({ onLogin }) {
             </div>
           </div>
 
-          <div style={{ fontSize: 21, fontWeight: 700, color: "#181c28", marginBottom: 3 }}>Staff Login</div>
-          <div style={{ fontSize: 12, color: "#9ca0a8", marginBottom: 26 }}>Select your name and enter your 4-digit PIN</div>
+          {adminMode ? (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#9b7eef" }} />
+                <div style={{ fontSize: 21, fontWeight: 700, color: "#181c28" }}>Administrator Access</div>
+              </div>
+              <div style={{ fontSize: 12, color: "#9ca0a8", marginBottom: 4 }}>Enter your administrator PIN to continue</div>
+              <button onClick={exitAdminMode} style={{ fontSize: 11, color: "#bbb", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                Back to staff login
+              </button>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 26 }}>
+              <div style={{ fontSize: 21, fontWeight: 700, color: "#181c28", marginBottom: 3 }}>Staff Login</div>
+              <div style={{ fontSize: 12, color: "#9ca0a8" }}>Select your name and enter your 4-digit PIN</div>
+            </div>
+          )}
 
-          {/* User dropdown */}
-          <div ref={dropRef} style={{ position: "relative", marginBottom: 20 }}>
+          {/* User dropdown — hidden in admin mode */}
+          {!adminMode && <div ref={dropRef} style={{ position: "relative", marginBottom: 20 }}>
             <div
               onClick={() => setDropOpen(o => !o)}
               style={{
@@ -269,9 +369,7 @@ export default function LoginScreen({ onLogin }) {
             >
               {selectedUser ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: "50%", background: meta.bg, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${meta.color}30` }}>
-                    <UserIcon size={14} color={meta.color} />
-                  </div>
+                  <AvatarBubble user={selectedUser} size={30} roleColor={meta.color} />
                   <div>
                     <div style={{ fontSize: 13.5, fontWeight: 600, color: "#181c28", lineHeight: 1.2 }}>{selectedUser.name}</div>
                     <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", background: meta.bg, color: meta.color, padding: "1px 6px", borderRadius: 3 }}>{meta.label}</span>
@@ -316,9 +414,7 @@ export default function LoginScreen({ onLogin }) {
                             borderLeft: selectedUser?.id === u.id ? `2.5px solid ${rm.color}` : "2.5px solid transparent",
                             transition: "all .1s",
                           }}>
-                          <div style={{ width: 28, height: 28, borderRadius: "50%", background: rm.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <UserIcon size={13} color={rm.color} />
-                          </div>
+                          <AvatarBubble user={u} size={28} roleColor={rm.color} />
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#181c28" }}>{u.name}</div>
                             <div style={{ fontSize: 10, color: "#aaa", marginTop: 1, textTransform: "capitalize" }}>{rm.label}</div>
@@ -335,12 +431,23 @@ export default function LoginScreen({ onLogin }) {
                 })}
               </div>
             )}
-          </div>
+          </div>} {/* end !adminMode dropdown */}
 
-          {/* PIN label */}
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#181c28", marginBottom: 13 }}>
-            {selectedUser ? `PIN for ${selectedUser.name.split(" ")[0]}` : "Enter 4-digit PIN"}
-          </div>
+          {/* PIN label with avatar */}
+          {selectedUser && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 13 }}>
+              <AvatarBubble user={selectedUser} size={38} roleColor={meta?.color} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#181c28" }}>{selectedUser.name}</div>
+                <div style={{ fontSize: 11, color: meta?.color }}>Enter 4-digit PIN</div>
+              </div>
+            </div>
+          )}
+          {!selectedUser && (
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#181c28", marginBottom: 13 }}>
+              Enter 4-digit PIN
+            </div>
+          )}
 
           {/* PIN dots */}
           <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 5, animation: shake ? "shake .4s ease" : "none" }}>

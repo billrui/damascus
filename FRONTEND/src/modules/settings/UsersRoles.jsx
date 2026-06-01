@@ -73,7 +73,14 @@ function UserRow({ user, currentUser, onEdit, onToggle, onReset, onDelete }) {
       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
     >
       <div style={{ width: 40, height: 40, borderRadius: 6, background: user.active ? `linear-gradient(135deg, ${C.accent}, ${C.accent}80)` : C.borderMid, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, color: "#FFFFFF" }}>
-        {user.avatar}
+{user.avatar && user.avatar.startsWith("data:") ? (
+            <img src={user.avatar} alt={user.name}
+              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }} />
+          ) : (
+            <span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>
+              {user.name?.charAt(0).toUpperCase()}
+            </span>
+          )}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -86,16 +93,21 @@ function UserRow({ user, currentUser, onEdit, onToggle, onReset, onDelete }) {
         </div>
       </div>
       <Badge label={`${ROLE_SYMBOLS[user.role]} ${user.role.charAt(0).toUpperCase() + user.role.slice(1)}`} color={ROLE_COLORS[user.role] || "gray"} />
-      {canManage && !isSelf && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <Btn variant="secondary" size="sm" onClick={() => onEdit(user)}>Edit</Btn>
-          <Btn variant="secondary" size="sm" onClick={() => onReset(user)}>Reset PIN</Btn>
-          <Btn variant={user.active ? "secondary" : "success"} size="sm" onClick={() => onToggle(user)}>
-            {user.active ? "Disable" : "Enable"}
-          </Btn>
-          <Btn variant="danger" size="sm" onClick={() => onDelete(user)}>Delete</Btn>
-        </div>
-      )}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {isSelf && (
+          <Btn variant="secondary" size="sm" onClick={() => onReset(user)}>Change my PIN</Btn>
+        )}
+        {canManage && !isSelf && (
+          <>
+            <Btn variant="secondary" size="sm" onClick={() => onEdit(user)}>Edit</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => onReset(user)}>Reset PIN</Btn>
+            <Btn variant={user.active ? "secondary" : "success"} size="sm" onClick={() => onToggle(user)}>
+              {user.active ? "Disable" : "Enable"}
+            </Btn>
+            <Btn variant="danger" size="sm" onClick={() => onDelete(user)}>Delete</Btn>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -109,7 +121,7 @@ function StaffTab({ users, setUsers, currentUser, toast }) {
   const [search, setSearch]         = useState("");
   const [filterRole, setFilterRole] = useState("all");
   const [newPin, setNewPin]         = useState("");
-  const [formData, setFormData]     = useState({ name: "", role: "cashier", pin: "", avatar: "-" });
+  const [formData, setFormData]     = useState({ name: "", role: "cashier", pin: "", avatar: "", imagePreview: "" });
   const [formError, setFormError]   = useState("");
   const [saving, setSaving]         = useState(false);
 
@@ -125,13 +137,13 @@ function StaffTab({ users, setUsers, currentUser, toast }) {
   const AVATARS = ["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"];
 
   const openAdd = () => {
-    setFormData({ name: "", role: availableRoles[0] || "cashier", pin: "", avatar: "-" });
+    setFormData({ name: "", role: availableRoles[0] || "cashier", pin: "", avatar: "", imagePreview: "" });
     setFormError("");
     setAddModal(true);
   };
 
   const openEdit = user => {
-    setFormData({ name: user.name, role: user.role, pin: "", avatar: user.avatar });
+    setFormData({ name: user.name, role: user.role, pin: "", avatar: user.avatar || "", imagePreview: user.avatar || "" });
     setFormError("");
     setEditUser(user);
   };
@@ -230,19 +242,80 @@ function StaffTab({ users, setUsers, currentUser, toast }) {
         <label style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary, display: "block", marginBottom: 6, letterSpacing: "0.5px" }}>
           {editUser ? "New PIN (leave blank to keep current)" : "PIN (4+ digits) *"}
         </label>
-        <Input value={formData.pin} onChange={e => setFormData(f => ({ ...f, pin: e.target.value }))} type="password" placeholder="----" />
+        <Input
+          value={formData.pin}
+          onChange={e => {
+            const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+            setFormData(f => ({ ...f, pin: val }));
+          }}
+          type="password"
+          placeholder="4 digits"
+          maxLength={4}
+          inputMode="numeric"
+        />
+        <div style={{ fontSize: 10, color: formData.pin.length === 4 ? C.green : C.textMuted, marginTop: 4 }}>
+          {formData.pin.length}/4 digits{formData.pin.length === 4 ? " — ready" : ""}
+        </div>
       </div>
       <div>
-        <label style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary, display: "block", marginBottom: 8, letterSpacing: "0.5px" }}>Avatar</label>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {AVATARS.map(a => (
-            <button type="button" key={a} onMouseDown={e => e.preventDefault()} onClick={() => setFormData(f => ({ ...f, avatar: a }))} style={{
-              width: 40, height: 40, borderRadius: 4,
-              border: formData.avatar === a ? `2px solid ${C.accent}` : `2px solid ${C.border}`,
-              background: formData.avatar === a ? `${C.accent}15` : C.surfaceAlt, fontSize: 18, cursor: "pointer",
-              transition: "all 0.15s ease",
-            }}>{a}</button>
-          ))}
+        <label style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary, display: "block", marginBottom: 8, letterSpacing: "0.5px" }}>Staff Photo</label>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {/* Preview */}
+          <div style={{
+            width: 72, height: 72, borderRadius: 8, overflow: "hidden", flexShrink: 0,
+            border: `2px solid ${formData.imagePreview ? C.accent : C.border}`,
+            background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            {formData.imagePreview ? (
+              <img src={formData.imagePreview} alt="preview"
+                style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+            )}
+          </div>
+          {/* Upload controls */}
+          <div style={{ flex: 1 }}>
+            <label style={{
+              display: "inline-block", padding: "8px 16px", borderRadius: 6, cursor: "pointer",
+              background: C.accent, color: "#fff", fontSize: 12, fontWeight: 600,
+              border: "none", marginBottom: 6,
+            }}>
+              Upload Photo
+              <input type="file" accept="image/*" style={{ display: "none" }}
+                onChange={e => {
+                  const file = e.target.files[0];
+                  if (!file) return;
+                  // Compress to max 200x200 before storing
+                  const reader = new FileReader();
+                  reader.onload = ev => {
+                    const img = new Image();
+                    img.onload = () => {
+                      const canvas = document.createElement("canvas");
+                      const size = Math.min(img.width, img.height);
+                      canvas.width = 200; canvas.height = 200;
+                      const ctx = canvas.getContext("2d");
+                      const sx = (img.width  - size) / 2;
+                      const sy = (img.height - size) / 2;
+                      ctx.drawImage(img, sx, sy, size, size, 0, 0, 200, 200);
+                      const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+                      setFormData(f => ({ ...f, avatar: dataUrl, imagePreview: dataUrl }));
+                    };
+                    img.src = ev.target.result;
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+            {formData.imagePreview && (
+              <button type="button" onClick={() => setFormData(f => ({ ...f, avatar: "", imagePreview: "" }))}
+                style={{ display: "block", fontSize: 11, color: C.red, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                Remove photo
+              </button>
+            )}
+            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>JPG or PNG, square preferred</div>
+          </div>
         </div>
       </div>
     </div>
@@ -313,9 +386,21 @@ function StaffTab({ users, setUsers, currentUser, toast }) {
       </Modal>
 
       {/* Reset PIN Modal */}
-      <Modal open={!!resetUser} onClose={() => setResetUser(null)} title={`Reset PIN: ${resetUser?.name}`} width={380}>
-        <p style={{ fontSize: 12, color: C.textSecondary, marginBottom: 14 }}>Enter a new PIN for this staff member.</p>
-        <Input value={newPin} onChange={e => setNewPin(e.target.value)} type="password" placeholder="New PIN (4+ digits)" />
+      <Modal open={!!resetUser} onClose={() => setResetUser(null)} title={resetUser?.id === currentUser.id ? "Change My PIN" : `Reset PIN: ${resetUser?.name}`} width={380}>
+        <p style={{ fontSize: 12, color: C.textSecondary, marginBottom: 14 }}>
+          {resetUser?.id === currentUser.id ? "Enter your new PIN below." : "Enter a new PIN for this staff member."}
+        </p>
+        <Input
+          value={newPin}
+          onChange={e => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+          type="password"
+          placeholder="4 digits"
+          maxLength={4}
+          inputMode="numeric"
+        />
+        <div style={{ fontSize: 10, color: newPin.length === 4 ? C.green : C.textMuted, marginTop: 4 }}>
+          {newPin.length}/4 digits
+        </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
           <Btn variant="secondary" onClick={() => setResetUser(null)}>Cancel</Btn>
           <Btn variant="primary" onClick={handleResetPin} disabled={newPin.length < 4}>Reset PIN</Btn>

@@ -35,9 +35,9 @@ export const T = {
 
 export function pillBtn(active, activeColor = T.amber) {
   return {
-    padding: "5px 14px",
-    borderRadius: 4,
-    fontSize: 11,
+    padding: "9px 18px",
+    borderRadius: 6,
+    fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
     border: "none",
@@ -50,19 +50,20 @@ export function pillBtn(active, activeColor = T.amber) {
 
 export function stepBtn(color = T.card) {
   return {
-    width: 24,
-    height: 24,
-    borderRadius: 3,
+    width: 44,
+    height: 44,
+    borderRadius: 6,
     border: `1px solid ${T.border}`,
     background: color,
     color: color === T.amber ? "#0A0E1A" : T.textPrimary,
     cursor: "pointer",
-    fontSize: 13,
+    fontSize: 20,
     fontWeight: 700,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     transition: "all 0.14s ease",
+    flexShrink: 0,
   };
 }
 
@@ -71,9 +72,9 @@ export function actionBtn(bg = T.card, small = false) {
     background: bg,
     color: bg === T.amber ? "#0A0E1A" : "#FFFFFF",
     border: "none",
-    borderRadius: 4,
-    padding: small ? "5px 12px" : "9px 18px",
-    fontSize: small ? 11 : 12,
+    borderRadius: 6,
+    padding: small ? "8px 16px" : "12px 22px",
+    fontSize: small ? 13 : 14,
     fontWeight: 600,
     cursor: "pointer",
     display: "flex",

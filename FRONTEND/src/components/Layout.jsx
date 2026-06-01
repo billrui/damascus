@@ -188,8 +188,17 @@ const SidebarContent = React.memo(function SidebarContent({ activeNav, setActive
 
       {/* Profile card */}
       <div style={{ margin:"14px 14px 0", background:roleMeta.bg, borderRadius:12, padding:"10px 12px", display:"flex", alignItems:"center", gap:10, border:`1px solid ${roleMeta.color}20`, flexShrink:0 }}>
-        <div style={{ width:36,height:36,borderRadius:9,flexShrink:0, background:`linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`, display:"flex",alignItems:"center",justifyContent:"center" }}>
-          <Icon name="user" size={16} color={roleMeta.color} />
+        <div style={{ width:36,height:36,borderRadius:9,flexShrink:0,overflow:"hidden",
+          background:user?.avatar?.startsWith("data:") ? "transparent" : `linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          border:`1px solid ${roleMeta.color}30` }}>
+          {user?.avatar?.startsWith("data:") ? (
+            <img src={user.avatar} alt={user.name} style={{width:"100%",height:"100%",objectFit:"cover"}} />
+          ) : (
+            <span style={{fontSize:15,fontWeight:700,color:roleMeta.color}}>
+              {user?.name?.charAt(0).toUpperCase()}
+            </span>
+          )}
         </div>
         <div style={{minWidth:0,flex:1}}>
           <div style={{ color:C.text, fontSize:13, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", fontFamily:T.font }}>{user.name}</div>
@@ -411,10 +420,18 @@ export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav
             padding:mobile?"4px 8px 4px 6px":"4px 12px 4px 8px",
             background:roleMeta.bg,borderRadius:10,border:`1px solid ${roleMeta.color}20`,
           }}>
-            <div style={{ width:mobile?28:32,height:mobile?28:32,borderRadius:8,flexShrink:0,
-              background:`linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`,
-              display:"flex",alignItems:"center",justifyContent:"center" }}>
-              <Icon name="user" size={mobile?12:14} color={roleMeta.color}/>
+            <div style={{ width:mobile?28:32,height:mobile?28:32,borderRadius:8,flexShrink:0,overflow:"hidden",
+              background:user?.avatar?.startsWith("data:") ? "transparent" : `linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`,
+              display:"flex",alignItems:"center",justifyContent:"center",
+              border:`1px solid ${roleMeta.color}20` }}>
+              {user?.avatar?.startsWith("data:") ? (
+                <img src={user.avatar} alt={user?.name}
+                  style={{width:"100%",height:"100%",objectFit:"cover"}} />
+              ) : (
+                <span style={{fontSize:mobile?12:14,fontWeight:700,color:roleMeta.color}}>
+                  {user?.name?.charAt(0).toUpperCase()}
+                </span>
+              )}
             </div>
             {!mobile && (
               <div>

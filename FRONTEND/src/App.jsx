@@ -43,6 +43,31 @@ export default function RoyalPalmApp() {
 
   const [activeNav, setActiveNav] = useState("dashboard");
 
+  // Listen for navigate events from child components
+  useEffect(() => {
+    const handler = (e) => setActiveNav(e.detail);
+    window.addEventListener("navigate", handler);
+    return () => window.removeEventListener("navigate", handler);
+  }, []);
+
+  // Listen for shift opened directly from CashierPOS
+  useEffect(() => {
+    const handler = (e) => setActiveShift(e.detail);
+    const reloadHandler = async () => {
+      try {
+        const { shiftsApi } = await import("./api/index.js");
+        const existing = await shiftsApi.active();
+        if (existing) setActiveShift({ ...existing, _dbId: existing.id });
+      } catch(_) {}
+    };
+    window.addEventListener("shift:opened", handler);
+    window.addEventListener("shift:reload", reloadHandler);
+    return () => {
+      window.removeEventListener("shift:opened", handler);
+      window.removeEventListener("shift:reload", reloadHandler);
+    };
+  }, []);
+
   // Force logout when access token expires and refresh fails
   useEffect(() => {
     const handler = () => logout();
@@ -91,7 +116,7 @@ export default function RoyalPalmApp() {
           return <CashierPOS user={user} sales={sales} setSales={setSales}
             batches={batches} setBatches={setBatches} openInvoices={openInvoices}
             setOpenInvoices={setOpenInvoices} recipes={recipes} ingredients={ingredients}
-            holdList={holdList} />;
+            holdList={holdList} setHoldList={setHoldList} activeShift={activeShift} />;
         if (user.role === "admin" || user.role === "manager")
           return <ManagerPOS user={user} menuItems={menuItems} holdList={holdList}
             setHoldList={setHoldList} openInvoices={openInvoices} setOpenInvoices={setOpenInvoices}

@@ -23,9 +23,7 @@ function normalizeHold(h) {
     id:          String(h.id),
     table:       h.table       ?? h.table_no    ?? "Walk-in",
     waiter:      h.waiter      ?? h.waiter_name ?? "Staff",
-    createdDate: h.createdDate ?? (h.created_at
-      ? new Date(h.created_at).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })
-      : new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })),
+    createdDate: h.createdDate ?? h.created_at ?? new Date().toISOString(),
     items,
     seats,
   };
@@ -34,13 +32,24 @@ function normalizeHold(h) {
 
 // --- Helpers ------------------------------------------------------------------
 function elapsedMinutes(createdDate) {
-  // createdDate is stored as a time string like "14:32" - compare against now
-  const now  = new Date();
-  const [h, m] = (createdDate || "00:00").split(":").map(Number);
+  if (!createdDate) return 0;
+  const now = new Date();
+  if (createdDate.includes("T") || createdDate.length > 8) {
+    const d = new Date(createdDate);
+    if (!isNaN(d)) return Math.max(0, Math.floor((now - d) / 60000));
+  }
+  const clean = createdDate.trim();
+  const isPM  = /pm/i.test(clean);
+  const isAM  = /am/i.test(clean);
+  const parts = clean.replace(/[apms]/gi, '').split(':').map(Number);
+  let h = parts[0] || 0;
+  const m = parts[1] || 0;
+  if (isPM && h < 12) h += 12;
+  if (isAM && h === 12) h = 0;
+  if (isNaN(h) || isNaN(m)) return 0;
   const then = new Date();
   then.setHours(h, m, 0, 0);
-  const diff = Math.floor((now - then) / 60000);
-  return Math.max(0, diff);
+  return Math.max(0, Math.floor((now - then) / 60000));
 }
 
 function urgencyColor(mins) {
@@ -358,53 +367,58 @@ function TableCard({ table, holds, onBump, onRecall, onCancel }) {
         </div>
       </div>
 
-      {/* ── Per-person sections — fully independent ── */}
+      {/* ── Per-person sections — each person is a distinct independent ticket ── */}
+      <div style={{ padding:"10px 12px", display:"flex", flexDirection:"column", gap:10 }}>
       {seatOrder.map((seat, si) => {
         const isDone  = !!doneSeat[seat];
         const items   = seatMap[seat]?.items || [];
-        const total   = items.reduce((s,i) => s + i.price * i.qty, 0);
+        const total   = items.reduce((s,i) => s + (i.price||0) * i.qty, 0);
 
         return (
           <div key={seat} style={{
-            borderTop: `1px solid ${T.border}`,
-            background: isDone ? T.surface : "transparent",
-            transition: "background .2s",
+            border: `2px solid ${isDone ? T.border : uColor}`,
+            borderRadius: 8,
+            background: isDone ? T.surface : `${uColor}08`,
+            overflow: "hidden",
+            transition: "all .2s",
+            opacity: isDone ? 0.6 : 1,
           }}>
-            {/* Person row header */}
+            {/* Person ticket header */}
             <div style={{
               display:"flex", justifyContent:"space-between", alignItems:"center",
-              padding:"8px 14px 4px",
+              padding:"8px 12px",
+              background: isDone ? T.card : `${uColor}18`,
+              borderBottom: `1px solid ${isDone ? T.border : `${uColor}30`}`,
             }}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                {/* Person pill — solid when active, faded when done */}
                 <span style={{
-                  padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:700,
+                  padding:"4px 14px", borderRadius:20, fontSize:12, fontWeight:800,
                   background: isDone ? "transparent" : uColor,
                   color: isDone ? T.textMuted : "#0A0E1A",
                   border: `1px solid ${isDone ? T.border : uColor}`,
+                  letterSpacing: 0.5,
                 }}>
                   {seat}
                 </span>
-                <span style={{ fontSize:9, color:T.textMuted }}>
+                <span style={{ fontSize:10, color: isDone ? T.textMuted : T.textSecondary, fontWeight:600 }}>
                   {items.length} item{items.length !== 1 ? "s" : ""}
-                  {isDone && <span style={{ color:T.green, marginLeft:4 }}>✓ done</span>}
+                  {isDone && <span style={{ color:T.green, marginLeft:6, fontWeight:700 }}>DONE</span>}
                 </span>
               </div>
 
               {/* DONE / Recall button */}
               {!isDone ? (
                 <button onClick={() => markSeatDone(seat)} style={{
-                  padding:"5px 14px", borderRadius:4, border:"none", cursor:"pointer",
-                  background: uColor,
-                  color: "#0A0E1A",
-                  fontWeight:700, fontSize:11, fontFamily:T.font,
-                  letterSpacing:"0.3px",
+                  padding:"7px 18px", borderRadius:6, border:"none", cursor:"pointer",
+                  background: uColor, color: "#0A0E1A",
+                  fontWeight:800, fontSize:12, fontFamily:T.font,
+                  letterSpacing:"0.5px", boxShadow:`0 2px 8px ${uColor}40`,
                 }}>
-                  ✓ DONE
+                  DONE
                 </button>
               ) : (
                 <button onClick={() => recallSeat(seat)} style={{
-                  padding:"4px 10px", borderRadius:4,
+                  padding:"5px 12px", borderRadius:6,
                   border:`1px solid ${T.border}`,
                   background:"transparent", color:T.textMuted,
                   fontWeight:600, fontSize:10, fontFamily:T.font, cursor:"pointer",
@@ -488,6 +502,7 @@ function TableCard({ table, holds, onBump, onRecall, onCancel }) {
           </div>
         );
       })}
+      </div>{/* end per-person boxes wrapper */}
 
       {/* ── Footer: Recall whole table when all done ── */}
       {allDone && (
