@@ -7,6 +7,9 @@ const Icon = React.memo(({ name, size = 18, color = "currentColor" }) => {
     dashboard:   <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
     pos:         <><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></>,
     kds:         <><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></>,
+    open_invoices: <><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></>,
+    open_orders: <><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></>,
+    production: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
     shift:       <><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
     reports:     <><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></>,
     settings:    <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></>,
@@ -69,7 +72,7 @@ const ROLE_STYLE = {
 };
 
 const PAGE_TITLES = {
-  dashboard:"Dashboard", pos:"Point of Sale", kds:"Kitchen Display",
+  dashboard:"Dashboard", pos:"Point of Sale", kds:"Kitchen Display", open_invoices:"Open Invoices", open_orders:"Open Orders", production:"Production",
   shift:"Shift Management", reports:"Analytics & Reports", settings:"System Settings",
   inventory:"Inventory", inventory_readonly:"Stock Viewer", receive:"Receive Stock",
   issue:"Issue Stock", expiry:"Expiry Control", variance:"Variance Report",
@@ -77,7 +80,7 @@ const PAGE_TITLES = {
 };
 
 const NAV_GROUPS = [
-  { label:"Operations",     ids:["dashboard","pos","kds","shift"] },
+  { label:"Operations",     ids:["dashboard","pos","kds","open_invoices","open_orders","production","shift"] },
   { label:"Menu & Stock",   ids:["items","inventory","inventory_readonly","expiry","variance","wastage"] },
   { label:"Reports & Admin",ids:["reports","settings"] },
 ];
@@ -188,17 +191,8 @@ const SidebarContent = React.memo(function SidebarContent({ activeNav, setActive
 
       {/* Profile card */}
       <div style={{ margin:"14px 14px 0", background:roleMeta.bg, borderRadius:12, padding:"10px 12px", display:"flex", alignItems:"center", gap:10, border:`1px solid ${roleMeta.color}20`, flexShrink:0 }}>
-        <div style={{ width:36,height:36,borderRadius:9,flexShrink:0,overflow:"hidden",
-          background:user?.avatar?.startsWith("data:") ? "transparent" : `linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`,
-          display:"flex",alignItems:"center",justifyContent:"center",
-          border:`1px solid ${roleMeta.color}30` }}>
-          {user?.avatar?.startsWith("data:") ? (
-            <img src={user.avatar} alt={user.name} style={{width:"100%",height:"100%",objectFit:"cover"}} />
-          ) : (
-            <span style={{fontSize:15,fontWeight:700,color:roleMeta.color}}>
-              {user?.name?.charAt(0).toUpperCase()}
-            </span>
-          )}
+        <div style={{ width:36,height:36,borderRadius:9,flexShrink:0, background:`linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`, display:"flex",alignItems:"center",justifyContent:"center" }}>
+          <Icon name="user" size={16} color={roleMeta.color} />
         </div>
         <div style={{minWidth:0,flex:1}}>
           <div style={{ color:C.text, fontSize:13, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", fontFamily:T.font }}>{user.name}</div>
@@ -361,7 +355,18 @@ export const Sidebar = React.memo(function Sidebar({ activeNav, setActiveNav, us
 });
 
 // --- TOPBAR -------------------------------------------------------------------
-export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav, onLogout, holdList=[], setHoldList, showHoldModal, setShowHoldModal, openInvoices=[], onMenuToggle }) {
+// Mobile sidebar overlay
+export function SidebarOverlay({ show, onClose }) {
+  if (!show) return null;
+  return (
+    <div onClick={onClose} style={{
+      position:"fixed", inset:0, background:"rgba(0,0,0,0.5)",
+      zIndex:199, display:"block",
+    }} />
+  );
+}
+
+export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav, onLogout, holdList=[], setHoldList, showHoldModal, setShowHoldModal, openInvoices=[], onMenuToggle, mobileMenuOpen, setMobileMenuOpen }) {
   const { mobile, tablet } = useBreakpoint();
   const showHamburger = mobile || tablet;
 
@@ -420,18 +425,10 @@ export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav
             padding:mobile?"4px 8px 4px 6px":"4px 12px 4px 8px",
             background:roleMeta.bg,borderRadius:10,border:`1px solid ${roleMeta.color}20`,
           }}>
-            <div style={{ width:mobile?28:32,height:mobile?28:32,borderRadius:8,flexShrink:0,overflow:"hidden",
-              background:user?.avatar?.startsWith("data:") ? "transparent" : `linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`,
-              display:"flex",alignItems:"center",justifyContent:"center",
-              border:`1px solid ${roleMeta.color}20` }}>
-              {user?.avatar?.startsWith("data:") ? (
-                <img src={user.avatar} alt={user?.name}
-                  style={{width:"100%",height:"100%",objectFit:"cover"}} />
-              ) : (
-                <span style={{fontSize:mobile?12:14,fontWeight:700,color:roleMeta.color}}>
-                  {user?.name?.charAt(0).toUpperCase()}
-                </span>
-              )}
+            <div style={{ width:mobile?28:32,height:mobile?28:32,borderRadius:8,flexShrink:0,
+              background:`linear-gradient(135deg,${roleMeta.color}40,${roleMeta.color}20)`,
+              display:"flex",alignItems:"center",justifyContent:"center" }}>
+              <Icon name="user" size={mobile?12:14} color={roleMeta.color}/>
             </div>
             {!mobile && (
               <div>

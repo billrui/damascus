@@ -569,32 +569,10 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
                 {openCount} OPEN
               </div>
             </div>
-            {/* Ready Orders alert */}
-            {readyOrders.length > 0 && (
-              <div style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "10px 14px", marginTop: 10,
-                background: `${T.success}12`, border: `1px solid ${T.success}40`,
-                borderRadius: 7, cursor: "pointer",
-              }} onClick={() => setFilter("ready")}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: T.success, letterSpacing: 0.3 }}>
-                    {readyOrders.length} Order{readyOrders.length > 1 ? "s" : ""} Ready from Kitchen
-                  </div>
-                  <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2 }}>Tap to view and send to invoice</div>
-                </div>
-                <div style={{
-                  background: T.success, color: "#fff", borderRadius: "50%",
-                  width: 28, height: 28, display: "flex", alignItems: "center",
-                  justifyContent: "center", fontSize: 13, fontWeight: 800,
-                }}>
-                  {readyOrders.length}
-                </div>
-              </div>
-            )}
+
 
             <div style={{ display: "flex", gap: 6, background: T.bg, borderRadius: 6, padding: 4, marginTop: 8 }}>
-              {[["open","Invoices"],["ready","Ready"],["all","All"]].map(([k,l]) => {
+              {[["open","Invoices"]].map(([k,l]) => {
                 const badge = k === "ready" ? readyOrders.length : 0;
                 return (
                   <button key={k} onClick={() => setFilter(k)}

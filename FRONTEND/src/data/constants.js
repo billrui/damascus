@@ -41,7 +41,7 @@ export const ALL_PERMISSIONS = [
 // --- Default permissions per role ---------------------------------------------
 export const DEFAULT_ROLE_PERMISSIONS = {
   admin:       ["dashboard","pos","shift","inventory","inventory_readonly","reports","expiry","variance","settings","wastage","items"],
-  manager:     ["dashboard","pos","shift","inventory","inventory_readonly","reports","expiry","variance","wastage","settings","items","kds"],
+  manager:     ["dashboard","pos","shift","inventory","inventory_readonly","reports","expiry","variance","wastage","settings","items","kds","open_invoices","open_orders","production"],
   cashier:     ["dashboard","pos","shift","inventory","inventory_readonly","expiry","wastage"],
   storekeeper: ["dashboard","inventory","inventory_readonly","expiry","wastage","items"],
   chef:        ["dashboard","inventory_readonly","kds"],
@@ -62,6 +62,9 @@ export const ALL_NAV = [
   { id: "dashboard",          label: "Dashboard",        emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
   { id: "pos",                label: "New Sale",          emoji: "-",  roles: ["admin","manager","cashier","waiter"] },
   { id: "kds",                label: "Kitchen Display",   emoji: "-",  roles: ["admin","manager","kitchen","chef"] },
+  { id: "open_invoices",      label: "Open Invoices",    emoji: "-",  roles: ["admin","manager"] },
+  { id: "open_orders",        label: "Open Orders",      emoji: "-",  roles: ["admin","manager"] },
+  { id: "production",         label: "Production",       emoji: "-",  roles: ["admin","manager"] },
   { id: "shift",              label: "Shift & Cash",      emoji: "-",  roles: ["admin","manager","cashier"] },
   { id: "items",              label: "Menu Items",        emoji: "--",  roles: ["admin","manager"] },
   { id: "inventory",          label: "Ingredients",       emoji: "-",  roles: ["admin","manager","storekeeper","cashier"] },

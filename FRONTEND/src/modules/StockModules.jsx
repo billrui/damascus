@@ -4,7 +4,9 @@ import { fmt, fmtK } from "../utils";
 import { Card, Btn, SectionHeader, ExpiryBadge } from "../components/UI";
 
 const _CATS  = ["Proteins","Grains","Vegetables","Oils","Spices","Dairy","Beverages","Spirits","Produce","Bakery","Utilities","Other"];
-const _UNITS = ["g","kg","ml","l","pcs","bunch","bottle","can","packet","box","bundle","crate"];
+
+const fmtStock = (n) => { const f = parseFloat(n)||0; return f%1===0 ? String(f) : f.toFixed(2); };
+const _UNITS = ["g","kg","ml","l","pcs","loaf","tray","slice","bunch","bottle","can","packet","box","bundle","crate","sack","jerrycan","tin","bar","roll","bag","sachet","cup"];
 
 // --- AddIngredientModal ---
 function AddIngredientModal({ onClose, onSaved }) {
@@ -13,7 +15,7 @@ function AddIngredientModal({ onClose, onSaved }) {
   const [error,  setError]  = useState("");
   const set = (k,v) => setForm(p => ({ ...p, [k]:v }));
   const costPerUnit = (form.purchase_cost && form.purchase_qty && parseFloat(form.purchase_qty) > 0)
-    ? (parseFloat(form.purchase_cost) / parseFloat(form.purchase_qty)).toFixed(4) : "";
+    ? (parseFloat(form.purchase_cost) / parseFloat(form.purchase_qty))% 1 === 0 ? s : parseFloat(s.toFixed(2)) : "";
   const isUtil = form.category === "Utilities";
 
   const save = async () => {
@@ -33,7 +35,10 @@ function AddIngredientModal({ onClose, onSaved }) {
         cost_per_unit: parseFloat(costPerUnit)||0,
       });
       if (form.opening_stock && parseFloat(form.opening_stock) > 0) {
-        await inventoryApi.receiveBatch({ ingredient_id: ing.id, qty: parseFloat(form.opening_stock), notes:"Opening stock" });
+        const pQty = parseFloat(form.purchase_qty) || 1;
+        const hasPurchaseUnit = form.purchase_unit && form.purchase_qty;
+        const stockQty = parseFloat(form.opening_stock) * (hasPurchaseUnit ? pQty : 1);
+        await inventoryApi.receiveBatch({ ingredient_id: ing.id, qty: stockQty, notes:"Opening stock" });
       }
       onSaved(ing);
     } catch(e) { setError(e?.response?.data?.error || "Save failed"); }
@@ -100,8 +105,17 @@ function AddIngredientModal({ onClose, onSaved }) {
             <div style={{ fontSize:9, fontWeight:600, color:"#C5A059", textTransform:"uppercase", marginBottom:6 }}>Stock and Alerts</div>
           </div>
           <div>
-            <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase" }}>Opening Stock ({form.unit})</label>
-            <input type="number" min="0" step="0.01" value={form.opening_stock} onChange={e=>set("opening_stock",e.target.value)} placeholder="Current qty on hand" style={{ ...fi, marginTop:4 }} />
+            <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase" }}>
+              Opening Stock ({form.purchase_unit && form.purchase_qty ? form.purchase_unit : form.unit})
+            </label>
+            <input type="number" min="0" step="0.01" value={form.opening_stock} onChange={e=>set("opening_stock",e.target.value)}
+              placeholder={form.purchase_unit && form.purchase_qty ? `Qty in ${form.purchase_unit}s` : "Current qty on hand"}
+              style={{ ...fi, marginTop:4 }} />
+            {form.purchase_unit && form.purchase_qty && form.opening_stock && (
+              <div style={{ fontSize:10, color:"#2E7D64", marginTop:3, fontWeight:600 }}>
+                = {(parseFloat(form.opening_stock)||0) * (parseFloat(form.purchase_qty)||1)} {form.unit}
+              </div>
+            )}
           </div>
           <div>
             <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase" }}>Reorder Level ({form.unit})</label>
@@ -461,32 +475,51 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
 
 // --- InventoryReadOnlyView ---
 export function InventoryReadOnlyView({ batches, ingredients }) {
-  const [search, setSearch] = useState("");
+  const [search,    setSearch]    = useState("");
+  const [liveStock, setLiveStock] = useState(null); // null = use prop batches
   const today = new Date();
+
+  // Refresh stock from backend when component mounts
+  useEffect(() => {
+    inventoryApi.batches({ limit:500 })
+      .then(r => setLiveStock(r.batches || []))
+      .catch(() => {});
+  }, []);
+
+  const activeBatches = liveStock || batches;
   const ing = (ingredients||[]).filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
   return (
     <div style={{ flex:1, overflowY:"auto", padding:28, background:"#F5F2EB" }}>
-      <SectionHeader title="Inventory (Read Only)" sub="View current stock levels" />
+      <SectionHeader title="Stock Viewer" sub={liveStock ? `Live stock — ${activeBatches.filter(b=>b.status==="active").length} active batches` : "Loading..."} />
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..."
         style={{ marginTop:16, marginBottom:16, padding:"8px 14px", border:"1px solid #E5E0D5", borderRadius:4, fontSize:12, width:"100%", maxWidth:300, boxSizing:"border-box" }} />
       <div style={{ background:"#FFF", borderRadius:8, border:"1px solid #E5E0D5", overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
             <tr style={{ background:"#1A1A1A" }}>
-              {["Ingredient","Category","Stock","Unit"].map(h => (
+              {["Ingredient","Category","Stock","Unit","Reorder"].map(h => (
                 <th key={h} style={{ padding:"10px 16px", fontSize:10, fontWeight:600, color:"rgba(255,255,255,0.7)", textAlign:"left", textTransform:"uppercase" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {ing.map((i,idx) => {
-              const stock = batches.filter(b=>b.ingredientId===i.id&&b.status==="active").reduce((s,b)=>s+b.remaining,0);
+              const bId = i.id;
+              const stockRaw = parseFloat(activeBatches.filter(b=>(b.ingredientId||b.ingredient_id)===bId&&b.status==="active").reduce((s,b)=>s+(parseFloat(b.remaining)||0),0));
+              const stock = stockRaw % 1 === 0 ? stockRaw : parseFloat(stockRaw.toFixed(2));
+              const reorder = i.reorderLevel || i.reorder_level || 0;
+              const isLow = stock > 0 && stock <= reorder;
+              const isOut = stock <= 0;
               return (
                 <tr key={i.id} style={{ borderBottom:"1px solid #F0EDE6", background:idx%2===0?"#FFF":"#FAFAFA" }}>
                   <td style={{ padding:"10px 16px", fontSize:12, fontWeight:600 }}>{i.name}</td>
                   <td style={{ padding:"10px 16px", fontSize:12, color:"#7A7A7A" }}>{i.category}</td>
-                  <td style={{ padding:"10px 16px", fontSize:12, fontFamily:"monospace", color: stock<=0?"#DC2626":"#1A1A1A" }}>{stock}</td>
+                  <td style={{ padding:"10px 16px", fontSize:12, fontFamily:"monospace", fontWeight:600, color: isOut?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>
+                    {stock} {isOut&&<span style={{fontSize:10,background:"#FEF2F2",color:"#DC2626",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>OUT</span>}
+                    {isLow&&!isOut&&<span style={{fontSize:10,background:"#FFFBEB",color:"#B8860B",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>LOW</span>}
+                  </td>
                   <td style={{ padding:"10px 16px", fontSize:12, color:"#7A7A7A" }}>{i.unit}</td>
+                  <td style={{ padding:"10px 16px", fontSize:11, color:"#9CA3AF" }}>{reorder>0?`Reorder at ${reorder}`:"-"}</td>
                 </tr>
               );
             })}
@@ -523,13 +556,20 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
     if (!form.qty||Number(form.qty)<=0)  { setError("Enter a valid quantity"); return; }
     setSaving(true); setError("");
     try {
+      const pUnit = selected.purchase_unit || selected.purchaseUnit;
+      const pQty  = parseFloat(selected.purchase_qty || selected.purchaseQty) || 0;
+      const hasPU = pUnit && pQty > 0;
+      // Convert purchase units to cooking units (e.g. 3 loaves × 20 = 60 slices)
+      const stockQty = hasPU ? Number(form.qty) * pQty : Number(form.qty);
+      // Cost per cooking unit = cost per purchase unit ÷ units per purchase
+      const costPerCookingUnit = hasPU && form.costPerUnit ? Number(form.costPerUnit) / pQty : Number(form.costPerUnit)||undefined;
       const batch = await inventoryApi.receiveBatch({
         ingredient_id: selected.id,
         batch_no:      form.batchNo||undefined,
-        qty:           Number(form.qty),
+        qty:           stockQty,
         expiry:        form.expiry||undefined,
         location:      form.location,
-        cost_per_unit: Number(form.costPerUnit)||undefined,
+        cost_per_unit: costPerCookingUnit,
       });
       setBatches(p=>[...p,{ id:batch.id, ingredientId:batch.ingredient_id, batchNo:batch.batch_no, qty:batch.qty, remaining:batch.remaining, expiry:batch.expiry, location:batch.location, status:"active" }]);
       setSaved(true); setSelected(null);
@@ -593,19 +633,55 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
               {error && <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:14 }}>{error}</div>}
               <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
                 <div>
-                  <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Quantity Received ({selected.unit}) *</label>
-                  <input type="number" min="0" step="0.001" value={form.qty} onChange={e=>setForm(f=>({...f,qty:e.target.value}))}
-                    placeholder={"e.g. 5 "+selected.unit} style={{ ...fi, marginTop:4, fontSize:16, fontWeight:600 }} autoFocus />
+                  {(() => {
+                    const pUnit = selected.purchase_unit || selected.purchaseUnit;
+                    const pQty  = parseFloat(selected.purchase_qty || selected.purchaseQty) || 0;
+                    const inSlices = pUnit && pQty && form.qty ? (parseFloat(form.qty)||0) * pQty : null;
+                    return (
+                      <>
+                        <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>
+                          Quantity Received ({pUnit && pQty ? pUnit : selected.unit}) *
+                        </label>
+                        <input type="number" min="0" step="0.001" value={form.qty}
+                          onChange={e=>setForm(f=>({...f,qty:e.target.value}))}
+                          placeholder={pUnit && pQty ? `e.g. 5 ${pUnit}s` : `e.g. 5 ${selected.unit}`}
+                          style={{ ...fi, marginTop:4, fontSize:16, fontWeight:600 }} autoFocus />
+                        {inSlices!==null && (
+                          <div style={{ fontSize:11, color:"#2E7D64", marginTop:4, fontWeight:600 }}>
+                            = {inSlices} {selected.unit} will be added to stock
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                   <div>
-                    <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Cost per {selected.unit} (KES)</label>
-                    <input type="number" min="0" step="0.01" value={form.costPerUnit} onChange={e=>setForm(f=>({...f,costPerUnit:e.target.value}))} placeholder="e.g. 120" style={{ ...fi, marginTop:4 }} />
+                    {(() => {
+                      const pUnit = selected.purchase_unit || selected.purchaseUnit;
+                      const pQty  = parseFloat(selected.purchase_qty || selected.purchaseQty) || 0;
+                      return (
+                        <>
+                          <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>
+                            Cost per {pUnit && pQty ? pUnit : selected.unit} (KES)
+                          </label>
+                          <input type="number" min="0" step="0.01" value={form.costPerUnit}
+                            onChange={e=>setForm(f=>({...f,costPerUnit:e.target.value}))}
+                            placeholder="e.g. 60" style={{ ...fi, marginTop:4 }} />
+                          {pUnit && pQty && form.costPerUnit && (
+                            <div style={{ fontSize:10, color:"#7A7A7A", marginTop:3 }}>
+                              = KES {(parseFloat(form.costPerUnit)/pQty).toFixed(2)} per {selected.unit}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div>
                     <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Total Value</label>
                     <div style={{ marginTop:4, padding:"8px 12px", background:"#F8F8F8", border:"1px solid #E5E0D5", borderRadius:4, fontSize:13, fontWeight:600, color:"#1A1A1A" }}>
                       {form.qty&&form.costPerUnit ? "KES "+(Number(form.qty)*Number(form.costPerUnit)).toFixed(2) : "-"}
+                      {(()=>{ const pu=selected.purchase_unit||selected.purchaseUnit; const pq=parseFloat(selected.purchase_qty||selected.purchaseQty)||0; return pu&&pq&&form.qty&&form.costPerUnit ? <div style={{fontSize:10,color:"#7A7A7A",marginTop:2}}>{(Number(form.qty)*pq).toFixed(0)} {selected.unit} total</div> : null; })()}
                     </div>
                   </div>
                 </div>
@@ -627,7 +703,13 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                 </div>
                 <button onClick={submit} disabled={saving}
                   style={{ padding:"12px", borderRadius:6, border:"none", background:saving?"#9CA3AF":"linear-gradient(135deg,#1A1A1A,#C5A059)", color:"#FFF", fontWeight:600, fontSize:13, cursor:saving?"default":"pointer" }}>
-                  {saving ? "Recording..." : `Record: ${form.qty||"?"} ${selected.unit} of ${selected.name}`}
+                  {saving ? "Recording..." : (() => {
+                    const pu = selected.purchase_unit||selected.purchaseUnit;
+                    const pq = parseFloat(selected.purchase_qty||selected.purchaseQty)||0;
+                    return pu&&pq
+                      ? `Record: ${form.qty||"?"} ${pu} of ${selected.name} (= ${(parseFloat(form.qty)||0)*pq} ${selected.unit})`
+                      : `Record: ${form.qty||"?"} ${selected.unit} of ${selected.name}`;
+                  })()}
                 </button>
               </div>
             </>
@@ -658,30 +740,17 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
 
 // --- ISSUE STOCK VIEW ---
 export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssues, user, ingredients: propIngredients = [] }) {
-  const DESTINATIONS = [
-    { id:"kitchen-tea",     label:"Kitchen - Tea & Beverages",    icon:"☕" },
-    { id:"kitchen-snacks",  label:"Kitchen - Snacks & Mandazi",   icon:"🥐" },
-    { id:"kitchen-mains",   label:"Kitchen - Main Meals",         icon:"🍽" },
-    { id:"kitchen-samosa",  label:"Kitchen - Samosas & Pastries", icon:"🥟" },
-    { id:"kitchen-pilau",   label:"Kitchen - Pilau & Rice",       icon:"🍛" },
-    { id:"kitchen-beef",    label:"Kitchen - Beef & Meat Meals",  icon:"🥩" },
-    { id:"kitchen-chicken", label:"Kitchen - Chicken Meals",      icon:"🍗" },
-    { id:"kitchen-fry",     label:"Kitchen - Frying Station",     icon:"🫕" },
-    { id:"bar",             label:"Bar - Beverages",              icon:"🥤" },
-    { id:"cold-room",       label:"Cold Room",                    icon:"❄" },
-    { id:"dry-store",       label:"Dry Store",                    icon:"📦" },
-  ];
 
-  const [selected,  setSelected]  = useState(null);
-  const [search,    setSearch]    = useState("");
-  const [form,      setForm]      = useState({ qty:"", destination:"kitchen-mains", notes:"" });
-  const [saving,    setSaving]    = useState(false);
-  const [saved,     setSaved]     = useState(false);
-  const [error,     setError]     = useState("");
-  const [issueLog,  setIssueLog]  = useState([]);
+  const [search,   setSearch]   = useState("");
+  const [qtys,     setQtys]     = useState({});   // { ingredientId: qtyString }
+  const [saving,   setSaving]   = useState(false);
+  const [saved,    setSaved]    = useState(false);
+  const [errors,   setErrors]   = useState({});
+  const [issueLog, setIssueLog] = useState([]);
+  const [notes,    setNotes]    = useState("");
 
   useEffect(() => {
-    inventoryApi.issues({ limit:20 }).then(r=>setIssueLog(r.issues||[])).catch(()=>{});
+    inventoryApi.issues({ limit:30 }).then(r=>setIssueLog(r.issues||[])).catch(()=>{});
   }, [saved]);
 
   const availBatches = (ingId) => batches
@@ -689,152 +758,172 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
     .sort((a,b)=>new Date(a.expiry)-new Date(b.expiry));
   const totalAvail = (ingId) => availBatches(ingId).reduce((s,b)=>s+b.remaining,0);
 
-  const pick = (ing) => { setSelected(ing); setForm(f=>({...f,qty:""})); setError(""); setSaved(false); };
+  const filtered = propIngredients
+    .filter(i=>i.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a,b)=>a.name.localeCompare(b.name));
 
-  const submit = async () => {
-    if (!selected)                        { setError("Select an ingredient"); return; }
-    if (!form.qty||Number(form.qty)<=0)   { setError("Enter a valid quantity"); return; }
-    const avail = totalAvail(selected.id);
-    if (Number(form.qty)>avail)           { setError(`Only ${avail} ${selected.unit} available`); return; }
-    const eligible = availBatches(selected.id);
-    if (!eligible.length)                 { setError("No active stock"); return; }
-    setSaving(true); setError("");
-    try {
-      const dest  = DESTINATIONS.find(d=>d.id===form.destination);
-      const issue = await inventoryApi.recordIssue({
-        ingredient_id: selected.id,
-        batch_id:      eligible[0].id,
-        qty:           Number(form.qty),
-        from_location: "Main Store",
-        to_location:   dest?.label||form.destination,
-        notes:         form.notes||undefined,
-      });
-      let needed = Number(form.qty);
-      const nb = [...batches];
-      for (const b of eligible) {
-        if (needed<=0) break;
-        const take = Math.min(b.remaining,needed);
-        const idx  = nb.findIndex(x=>x.id===b.id);
-        nb[idx] = {...nb[idx], remaining:nb[idx].remaining-take};
-        if (nb[idx].remaining<=0) nb[idx]={...nb[idx],status:"depleted"};
-        needed -= take;
-      }
-      setBatches(nb);
-      setStoreIssues(p=>[...p,issue]);
-      setSaved(true); setSelected(null);
-      setForm(f=>({...f,qty:"",notes:""}));
-      setTimeout(()=>setSaved(false),3000);
-    } catch(e) { setError(e?.response?.data?.error||"Issue failed");
-    } finally { setSaving(false); }
+  const hasQtys = Object.values(qtys).some(v=>Number(v)>0);
+
+  const submitAll = async () => {
+    const toIssue = filtered.filter(i=>Number(qtys[i.id])>0);
+    if (!toIssue.length) return;
+
+    // Validate
+    const errs = {};
+    toIssue.forEach(ing=>{
+      const qty = Number(qtys[ing.id]);
+      const avail = totalAvail(ing.id);
+      if (qty > avail) errs[ing.id] = `Max ${fmtStock(avail)} ${ing.unit}`;
+    });
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setSaving(true); setErrors({});
+    const nb = [...batches];
+    let anyFailed = false;
+
+    for (const ing of toIssue) {
+      const qty = Number(qtys[ing.id]);
+      const eligible = availBatches(ing.id);
+      if (!eligible.length) continue;
+      try {
+        await inventoryApi.recordIssue({
+          ingredient_id: ing.id,
+          batch_id:      eligible[0].id,
+          qty,
+          from_location: "Main Store",
+          to_location:   "Kitchen",
+          notes:         notes || undefined,
+        });
+        // Deduct FEFO
+        let needed = qty;
+        for (const b of eligible) {
+          if (needed<=0) break;
+          const take = Math.min(b.remaining, needed);
+          const idx  = nb.findIndex(x=>x.id===b.id);
+          nb[idx] = {...nb[idx], remaining: nb[idx].remaining - take};
+          if (nb[idx].remaining<=0) nb[idx]={...nb[idx], status:"depleted"};
+          needed -= take;
+        }
+      } catch(e) { anyFailed = true; }
+    }
+
+    setBatches(nb);
+    setSaving(false);
+    setSaved(true);
+    setQtys({});
+    setNotes("");
+    setTimeout(()=>setSaved(false), 3000);
+    // Refresh log
+    inventoryApi.issues({ limit:30 }).then(r=>setIssueLog(r.issues||[])).catch(()=>{});
   };
 
-  const fi = { border:"1px solid #E5E0D5", borderRadius:4, padding:"8px 12px", fontSize:12, outline:"none", background:"#FFFFFF", width:"100%", boxSizing:"border-box", fontFamily:"'Inter',sans-serif" };
-  const filtered = propIngredients.filter(i=>i.name.toLowerCase().includes(search.toLowerCase()));
+  const fi = { border:"1px solid #E5E0D5", borderRadius:4, outline:"none", background:"#FFFFFF", fontFamily:"'Inter',sans-serif" };
 
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", background:"#F5F2EB" }}>
-      <div style={{ padding:"20px 28px 12px", flexShrink:0 }}>
-        <SectionHeader title="Issue Stock" sub="Select ingredient and destination - FEFO applied automatically" />
-        {saved && <div style={{ marginTop:10, padding:"8px 14px", background:"#F0FDF4", border:"1px solid #86EFAC", borderRadius:4, fontSize:11, color:"#15803D", fontWeight:600 }}>Stock issued successfully!</div>}
-      </div>
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"260px 1fr 260px", gap:16, padding:"0 28px 28px", overflow:"hidden" }}>
 
-        {/* LEFT: ingredient list */}
-        <div style={{ display:"flex", flexDirection:"column", gap:8, overflow:"hidden" }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ingredients..." style={{ ...fi, flexShrink:0 }} />
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
-            {filtered.map(ing=>{
-              const avail  = totalAvail(ing.id);
-              const isSel  = selected?.id===ing.id;
-              const noStock= avail<=0;
-              return (
-                <div key={ing.id} onClick={()=>!noStock&&pick(ing)}
-                  style={{ padding:"10px 14px", borderRadius:6, cursor:noStock?"not-allowed":"pointer", border:`1px solid ${isSel?"#C5A059":noStock?"#FECACA":"#E5E0D5"}`, background:isSel?"#FEF9F0":noStock?"#FEF2F2":"#FFF", opacity:noStock?0.55:1, transition:"all 0.15s" }}>
-                  <div style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>{ing.name}</div>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:3 }}>
-                    <span style={{ fontSize:10, color:"#7A7A7A" }}>{ing.unit}</span>
-                    <span style={{ fontSize:10, fontWeight:600, color:noStock?"#DC2626":avail<=(ing.reorderLevel||ing.reorder_level||0)?"#B8860B":"#2E7D64" }}>
-                      {noStock?"OUT":avail+" "+ing.unit}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+      {/* Header */}
+      <div style={{ padding:"20px 28px 14px", flexShrink:0, borderBottom:"1px solid #E5E0D5", background:"#FFFFFF" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
+          <div>
+            <SectionHeader title="Issue Stock to Kitchen" sub="Enter quantities issued — stock deducted automatically (FEFO)" />
+            {saved && <div style={{ marginTop:8, padding:"6px 14px", background:"#F0FDF4", border:"1px solid #86EFAC", borderRadius:4, fontSize:11, color:"#15803D", fontWeight:600, display:"inline-block" }}>Stock issued successfully!</div>}
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notes (optional)..."
+              style={{ ...fi, padding:"8px 12px", fontSize:12, width:220 }} />
+            <button onClick={submitAll} disabled={saving||!hasQtys}
+              style={{ padding:"10px 24px", borderRadius:6, border:"none", fontWeight:700, fontSize:13, cursor:hasQtys?"pointer":"not-allowed",
+                background:hasQtys?"linear-gradient(135deg,#1A1A1A,#C5A059)":"#E5E0D5", color:hasQtys?"#FFF":"#9CA3AF", whiteSpace:"nowrap" }}>
+              {saving ? "Issuing..." : `Issue${hasQtys?" ("+Object.values(qtys).filter(v=>Number(v)>0).length+" items)":"..."}`}
+            </button>
           </div>
         </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter ingredients..."
+          style={{ ...fi, padding:"8px 14px", fontSize:12, width:260, marginTop:12 }} />
+      </div>
 
-        {/* CENTRE: issue form */}
-        <div style={{ background:"#FFF", border:"1px solid #E5E0D5", borderRadius:8, padding:24, overflowY:"auto" }}>
-          {!selected ? (
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", color:"#9CA3AF" }}>
-              <div style={{ fontSize:48, marginBottom:12 }}>←</div>
-              <div style={{ fontSize:13, fontWeight:500 }}>Select an ingredient to issue</div>
-              <div style={{ fontSize:11, marginTop:6 }}>Red items are out of stock</div>
-            </div>
-          ) : (
-            <>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-                <div>
-                  <div style={{ fontSize:16, fontWeight:600, color:"#1A1A1A" }}>{selected.name}</div>
-                  <div style={{ fontSize:12, color:"#2E7D64", marginTop:2, fontWeight:600 }}>{totalAvail(selected.id)} {selected.unit} available</div>
-                </div>
-                <button onClick={()=>setSelected(null)} style={{ border:"1px solid #E5E0D5", background:"#FFF", borderRadius:4, padding:"4px 12px", fontSize:11, cursor:"pointer", color:"#7A7A7A" }}>Change</button>
-              </div>
-              {error && <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:14 }}>{error}</div>}
-              <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-                <div>
-                  <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Quantity to Issue ({selected.unit}) *</label>
-                  <input type="number" min="0" step="0.001" value={form.qty} onChange={e=>setForm(f=>({...f,qty:e.target.value}))}
-                    placeholder={`Max ${totalAvail(selected.id)} ${selected.unit}`} style={{ ...fi, marginTop:4, fontSize:16, fontWeight:600 }} autoFocus />
-                </div>
-                <div>
-                  <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Destination / Purpose *</label>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:6 }}>
-                    {DESTINATIONS.map(dest=>(
-                      <div key={dest.id} onClick={()=>setForm(f=>({...f,destination:dest.id}))}
-                        style={{ padding:"8px 10px", borderRadius:6, cursor:"pointer", border:`1px solid ${form.destination===dest.id?"#C5A059":"#E5E0D5"}`, background:form.destination===dest.id?"#FEF9F0":"#FFF", display:"flex", alignItems:"center", gap:8, transition:"all 0.15s" }}>
-                        <span style={{ fontSize:14 }}>{dest.icon}</span>
-                        <span style={{ fontSize:10, fontWeight:form.destination===dest.id?600:400, color:form.destination===dest.id?"#C5A059":"#4A4A4A", lineHeight:1.3 }}>{dest.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Notes (optional)</label>
-                  <input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))}
-                    placeholder="e.g. For morning tea batch, for 50 samosas..." style={{ ...fi, marginTop:4 }} />
-                </div>
-                {availBatches(selected.id).length>0 && (
-                  <div style={{ padding:"10px 12px", background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:6 }}>
-                    <div style={{ fontSize:9, fontWeight:600, color:"#92400E", textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>FEFO - oldest batch used first:</div>
-                    {availBatches(selected.id).slice(0,2).map(b=>(
-                      <div key={b.id} style={{ fontSize:11, color:"#92400E", marginBottom:2 }}>
-                        {b.remaining} {selected.unit} · exp: {b.expiry?new Date(b.expiry).toLocaleDateString():"No expiry"} · {b.location}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button onClick={submit} disabled={saving}
-                  style={{ padding:"12px", borderRadius:6, border:"none", background:saving?"#9CA3AF":"linear-gradient(135deg,#1A1A1A,#C5A059)", color:"#FFF", fontWeight:600, fontSize:12, cursor:saving?"default":"pointer" }}>
-                  {saving?"Issuing...":`Issue ${form.qty||"?"} ${selected.unit} ${selected.name} to ${DESTINATIONS.find(d=>d.id===form.destination)?.label||""}`}
-                </button>
-              </div>
-            </>
-          )}
+      {/* Main — two columns */}
+      <div style={{ flex:1, display:"flex", overflow:"hidden", gap:0 }}>
+
+        {/* Issue sheet */}
+        <div style={{ flex:1, overflowY:"auto", padding:"16px 28px" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:"#F5F2EB", borderBottom:"2px solid #E5E0D5" }}>
+                {["Ingredient","Unit","In Stock","Qty to Issue",""].map(h=>(
+                  <th key={h} style={{ padding:"10px 12px", textAlign:"left", fontSize:10, fontWeight:700, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((ing,idx)=>{
+                const avail   = totalAvail(ing.id);
+                const qty     = qtys[ing.id]||"";
+                const hasQty  = Number(qty)>0;
+                const err     = errors[ing.id];
+                const noStock = avail<=0;
+                const isLow   = avail>0 && avail<=(ing.reorderLevel||ing.reorder_level||0);
+                return (
+                  <tr key={ing.id} style={{
+                    background: hasQty?"#FEF9F0":idx%2===0?"#FFFFFF":"#FAFAF8",
+                    borderBottom:"1px solid #F0EDE6",
+                    opacity: noStock?0.5:1,
+                  }}>
+                    <td style={{ padding:"10px 12px", fontWeight:600, color:"#1A1A1A" }}>{ing.name}</td>
+                    <td style={{ padding:"10px 12px", color:"#7A7A7A", fontSize:11 }}>{ing.unit}</td>
+                    <td style={{ padding:"10px 12px" }}>
+                      <span style={{ fontWeight:600, color:noStock?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>
+                        {noStock?"OUT":avail}
+                      </span>
+                    </td>
+                    <td style={{ padding:"6px 12px", width:140 }}>
+                      <input
+                        type="number" min="0" step="0.001"
+                        value={qty}
+                        disabled={noStock}
+                        onChange={e=>{
+                          setQtys(p=>({...p,[ing.id]:e.target.value}));
+                          setErrors(p=>({...p,[ing.id]:undefined}));
+                        }}
+                        placeholder="0"
+                        style={{
+                          ...fi, padding:"7px 10px", fontSize:14, fontWeight:hasQty?700:400,
+                          width:"100%", boxSizing:"border-box",
+                          border:`1px solid ${err?"#FECACA":hasQty?"#C5A059":"#E5E0D5"}`,
+                          background:noStock?"#F5F5F5":"#FFFFFF",
+                          color:hasQty?"#C5A059":"#1A1A1A",
+                        }}
+                      />
+                      {err && <div style={{ fontSize:10, color:"#DC2626", marginTop:2 }}>{err}</div>}
+                    </td>
+                    <td style={{ padding:"10px 12px", width:80 }}>
+                      {hasQty && (
+                        <button onClick={()=>setQtys(p=>({...p,[ing.id]:""}))}
+                          style={{ fontSize:11, color:"#DC2626", background:"none", border:"none", cursor:"pointer", padding:0, fontWeight:600 }}>
+                          Clear
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
-        {/* RIGHT: issue log */}
-        <div style={{ background:"#FFF", border:"1px solid #E5E0D5", borderRadius:8, padding:20, overflowY:"auto" }}>
-          <div style={{ fontSize:12, fontWeight:600, color:"#1A1A1A", marginBottom:14 }}>Recent Issues</div>
+        {/* Right: recent issues log */}
+        <div style={{ width:260, background:"#FFFFFF", borderLeft:"1px solid #E5E0D5", overflowY:"auto", padding:20, flexShrink:0 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#1A1A1A", marginBottom:14, letterSpacing:0.3 }}>Recent Issues</div>
           {issueLog.length===0 && <div style={{ color:"#9CA3AF", fontSize:11, textAlign:"center", marginTop:20 }}>No issues recorded yet</div>}
           {issueLog.map(iss=>(
-            <div key={iss.id} style={{ padding:"10px 0", borderBottom:"1px solid #F0EDE6" }}>
-              <div style={{ display:"flex", justifyContent:"space-between" }}>
+            <div key={iss.id} style={{ padding:"9px 0", borderBottom:"1px solid #F0EDE6" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
                 <span style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>{iss.ingredient_name||iss.ingredient_id}</span>
-                <span style={{ fontSize:11, fontWeight:600, color:"#8B3A3A" }}>-{iss.qty} {iss.unit}</span>
+                <span style={{ fontSize:11, fontWeight:700, color:"#8B3A3A" }}>-{iss.qty}</span>
               </div>
-              <div style={{ fontSize:10, color:"#7A7A7A", marginTop:2 }}>to {iss.to_location}</div>
-              <div style={{ fontSize:10, color:"#9CA3AF", marginTop:1 }}>{iss.issue_date?new Date(iss.issue_date).toLocaleDateString():"Today"} · {iss.issued_by_name||"-"}</div>
+              <div style={{ fontSize:10, color:"#7A7A7A", marginTop:1 }}>{iss.to_location}</div>
+              <div style={{ fontSize:10, color:"#9CA3AF" }}>{iss.issue_date?new Date(iss.issue_date).toLocaleDateString():"Today"} · {iss.issued_by_name||"-"}</div>
             </div>
           ))}
         </div>

@@ -3,11 +3,11 @@
 
 export const T = {
   // Backgrounds - warm charcoal palette
-  bg:        "#0A0E1A",
-  surface:   "#0F1520",
-  card:      "#141C2E",
-  cardHover: "#1A2540",
-  border:    "#1F2D42",
+  bg:        "#D6D2CB",
+  surface:   "#F9FAFB",
+  card:      "#FFFFFF",
+  cardHover: "#F3F4F6",
+  border:    "#E5E7EB",
 
   // Brand colours - refined gold/brass palette
   amber:     "#C5A059",
@@ -22,9 +22,9 @@ export const T = {
   error:     "#8B3A3A",
 
   // Text colours
-  textPrimary:   "#ECF0F3",
-  textSecondary: "#8A9BAF",
-  textMuted:     "#4A5A6E",
+  textPrimary:   "#111827",
+  textSecondary: "#4B5563",
+  textMuted:     "#9CA3AF",
   textFaint:     "#2A3A4E",
 
   // Typography - refined, professional

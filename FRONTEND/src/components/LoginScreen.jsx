@@ -1,3 +1,4 @@
+import hotelFoodImg from "../assets/hotel-food.jpg";
 import { useState, useEffect, useRef } from "react";
 import { T } from "../posTheme";
 
@@ -223,7 +224,7 @@ export default function LoginScreen({ onLogin }) {
 
   // -- Main login ------------------------------------------------------------
   return (
-    <div style={{ minHeight: "100vh", display: "flex", fontFamily: T.font, background: "#0c0f18", flexWrap: "wrap" }}>
+    <div style={{ minHeight: "100vh", height: "100vh", overflowY: "auto", WebkitOverflowScrolling: "touch", display: "flex", fontFamily: T.font, background: "#0c0f18", flexWrap: "wrap" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
         @keyframes shake  { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-7px)} 40%{transform:translateX(7px)} 60%{transform:translateX(-5px)} 80%{transform:translateX(5px)} }
@@ -238,7 +239,7 @@ export default function LoginScreen({ onLogin }) {
         /* Responsive: hide left panel on small screens */
         @media (max-width: 640px) {
           .login-left  { display: none !important; }
-          .login-right { min-height: 100vh; width: 100% !important; flex: none !important; padding: 28px 20px !important; justify-content: flex-start !important; padding-top: 48px !important; }
+          .login-right { min-height: 100vh; width: 100% !important; flex: none !important; padding: 24px 24px 60px 24px !important; justify-content: flex-start !important; padding-top: 24px !important; }
         }
         @media (min-width: 641px) and (max-width: 900px) {
           .login-left  { flex: 0 0 38% !important; padding: 32px 28px !important; }
@@ -274,39 +275,40 @@ export default function LoginScreen({ onLogin }) {
           </svg>
         </div>
 
-        {/* Brand — tap 5x to reveal admin login */}
-        <div onClick={handleLogoTap} style={{ position: "relative", zIndex: 1, textAlign: "center", animation: "fadeUp .9s ease both", cursor: "default", userSelect: "none" }}>
+        {/* Food image — tap 5x to reveal admin login */}
+        <div onClick={handleLogoTap} style={{ position: "relative", zIndex: 1, textAlign: "center", animation: "fadeUp .9s ease both", cursor: "default", userSelect: "none", width: "100%" }}>
+
+          {/* Food image */}
           <div style={{
-            width: 72, height: 72, margin: "0 auto 24px",
-            background: `linear-gradient(145deg, #a07830, ${T.amber}, #7a5c1e)`,
-            borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: `0 0 0 6px rgba(201,168,76,0.1), 0 0 0 12px rgba(201,168,76,0.05), 0 20px 48px rgba(0,0,0,0.5)`,
-            transform: "rotate(45deg)",
+            width: "100%", height: 280,
+            borderRadius: 16, overflow: "hidden",
+            marginBottom: 28,
+            boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(201,168,76,0.15)",
+            border: "1px solid rgba(201,168,76,0.2)",
           }}>
-            <div style={{ transform: "rotate(-45deg)" }}>
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <path d="M16 4L28 16L16 28L4 16L16 4Z" fill="rgba(12,15,24,0.85)"/>
-                <path d="M16 9L23 16L16 23L9 16L16 9Z" fill={T.amberLight} opacity="0.7"/>
-              </svg>
-            </div>
+            <img
+              src={hotelFoodImg}
+              alt="Damascus Hotel"
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
           </div>
 
-          <div style={{ color: "rgba(201,168,76,0.5)", fontSize: 9, letterSpacing: 5, marginBottom: 10, fontWeight: 500 }}>EST. 2018</div>
-
           <div style={{
-            color: T.amberLight, fontWeight: 600, fontSize: 30,
-            letterSpacing: 6, lineHeight: 1.1,
+            color: T.amberLight, fontWeight: 800, fontSize: 38,
+            letterSpacing: 5, lineHeight: 1.1,
             fontFamily: "'Cormorant Garamond', Georgia, serif",
             fontStyle: "italic",
-            textShadow: "0 2px 20px rgba(232,201,106,0.2)",
+            textShadow: "0 2px 24px rgba(232,201,106,0.35)",
+            marginBottom: 8,
           }}>Damascus</div>
-          <div style={{ color: "rgba(201,168,76,0.7)", fontSize: 11, letterSpacing: 8, marginTop: 4, fontWeight: 500 }}>HOTEL</div>
+          <div style={{ color: "rgba(201,168,76,0.8)", fontSize: 13, letterSpacing: 10, fontWeight: 700 }}>HOTEL</div>
+          <div style={{
+            color: "rgba(255,255,255,0.55)", fontSize: 12, fontStyle: "italic",
+            marginTop: 14, letterSpacing: 1.5, lineHeight: 1.6,
+            fontFamily: "'Cormorant Garamond', Georgia, serif",
+          }}>Where Comfort Meets Excellence</div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px auto", width: 160 }}>
-            <div style={{ flex: 1, height: 1, background: "linear-gradient(to right, transparent, rgba(201,168,76,0.3))" }} />
-            <div style={{ width: 4, height: 4, background: T.amber, transform: "rotate(45deg)", opacity: 0.6 }} />
-            <div style={{ flex: 1, height: 1, background: "linear-gradient(to left, transparent, rgba(201,168,76,0.3))" }} />
-          </div>
+
 
           <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 8.5, letterSpacing: 4 }}>
             POINT OF SALE & INVENTORY SYSTEM
@@ -322,17 +324,21 @@ export default function LoginScreen({ onLogin }) {
 
       {/* -- RIGHT: Login form -- */}
       <div className="login-right" style={{
-        flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         background: "#f2ede6", padding: "40px 32px",
         minWidth: 0,
       }}>
         <div style={{ width: "100%", maxWidth: 340, animation: "fadeUp .65s .1s ease both", opacity: 0 }}>
 
           {/* Mobile logo (only visible when left panel is hidden) */}
-          <div style={{ display: "none" }} className="mobile-brand">
-            <div style={{ textAlign: "center", marginBottom: 28 }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "#181c28", letterSpacing: 1, fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic" }}>Damascus Hotel</div>
-              <div style={{ fontSize: 9, color: "#c9a84c", letterSpacing: 3, marginTop: 2 }}>POS SYSTEM</div>
+          <div style={{ display: "none" }} className="mobile-brand" onClick={handleLogoTap}>
+            <div style={{ width:"100%", height:140, borderRadius:12, overflow:"hidden", marginBottom:14, border:"1px solid rgba(201,168,76,0.2)", boxShadow:"0 8px 32px rgba(0,0,0,0.15)" }}>
+              <img src={hotelFoodImg} alt="Damascus Hotel" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} />
+            </div>
+            <div style={{ textAlign:"center", marginBottom:20 }}>
+              <div style={{ fontSize:30, fontWeight:800, color:"#1A1A1A", letterSpacing:4, fontFamily:"'Cormorant Garamond', serif", fontStyle:"italic" }}>Damascus</div>
+              <div style={{ fontSize:11, color:"#c9a84c", letterSpacing:8, fontWeight:700, marginTop:4 }}>HOTEL</div>
+              <div style={{ fontSize:11, color:"#7A7A7A", fontStyle:"italic", marginTop:8, fontFamily:"'Cormorant Garamond', serif", letterSpacing:1 }}>Where Comfort Meets Excellence</div>
             </div>
           </div>
 
@@ -386,7 +392,7 @@ export default function LoginScreen({ onLogin }) {
 
             {dropOpen && (
               <div style={{
-                position: "absolute", top: "calc(100% + 5px)", left: 0, right: 0, zIndex: 50,
+                position: "absolute", top: "calc(100% + 5px)", left: 0, right: 0, zIndex: 50, maxHeight: "40vh",
                 background: "#fff", borderRadius: 10, border: "1px solid #e0dbd4",
                 boxShadow: "0 10px 36px rgba(0,0,0,0.12)", overflow: "hidden",
                 animation: "dropIn .18s ease both", maxHeight: 280, overflowY: "auto",
@@ -496,10 +502,8 @@ export default function LoginScreen({ onLogin }) {
           </div>
 
           <div style={{ marginTop: 14, fontSize: 10.5, color: "#b0a898", textAlign: "center" }}>
-            PIN auto-submits after 4 digits
           </div>
           <div style={{ marginTop: 10, fontSize: 10, color: "#ccc", textAlign: "center" }}>
-            Contact your administrator if you cannot log in
           </div>
         </div>
       </div>
@@ -507,7 +511,7 @@ export default function LoginScreen({ onLogin }) {
       {/* Mobile branding CSS (inject via style tag) */}
       <style>{`
         @media (max-width: 640px) {
-          .mobile-brand { display: block !important; }
+          .mobile-brand { display: block !important; cursor: pointer; }
         }
       `}</style>
     </div>

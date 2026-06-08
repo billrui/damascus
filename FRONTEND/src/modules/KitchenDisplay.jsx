@@ -34,22 +34,24 @@ function normalizeHold(h) {
 function elapsedMinutes(createdDate) {
   if (!createdDate) return 0;
   const now = new Date();
-  if (createdDate.includes("T") || createdDate.length > 8) {
-    const d = new Date(createdDate);
-    if (!isNaN(d)) return Math.max(0, Math.floor((now - d) / 60000));
+  // Handle ISO timestamps directly
+  if (createdDate.includes("T") || createdDate.includes("-")) {
+    const diff = Math.floor((now - new Date(createdDate)) / 60000);
+    return Math.max(0, diff);
   }
+  // Handle time strings like "05:58 PM", "17:58", "5:58 PM"
   const clean = createdDate.trim();
   const isPM  = /pm/i.test(clean);
   const isAM  = /am/i.test(clean);
-  const parts = clean.replace(/[apms]/gi, '').split(':').map(Number);
+  const parts = clean.replace(/[apm\s]/gi, "").split(":").map(Number);
   let h = parts[0] || 0;
   const m = parts[1] || 0;
   if (isPM && h < 12) h += 12;
   if (isAM && h === 12) h = 0;
-  if (isNaN(h) || isNaN(m)) return 0;
   const then = new Date();
   then.setHours(h, m, 0, 0);
-  return Math.max(0, Math.floor((now - then) / 60000));
+  const diff = Math.floor((now - then) / 60000);
+  return Math.max(0, diff);
 }
 
 function urgencyColor(mins) {
@@ -166,7 +168,11 @@ function OrderCard({ hold, onBump, onRecall }) {
         </div>
         <div style={{ fontSize:9, fontWeight:700, color:T.textMuted }}>
           WAITER: <span style={{ color:"#7EB8F7" }}>{hold.waiter}</span>
-          <span style={{ fontWeight:400, marginLeft:6 }}>· {hold.createdDate}</span>
+          <span style={{ fontWeight:400, marginLeft:6 }}>
+            · {hold.createdDate ? (hold.createdDate.includes("T")
+              ? new Date(hold.createdDate).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})
+              : hold.createdDate) : ""}
+          </span>
         </div>
       </div>
       {/* Items — flat list, already filtered to this person */}
@@ -250,7 +256,7 @@ function OrderCard({ hold, onBump, onRecall }) {
 
 
 // --- Table Card — one card per table, each person independently bumpable -----
-function TableCard({ table, holds, onBump, onRecall, onCancel }) {
+function TableCard({ table, holds, onBump, onRecall, onCancel, user }) {
   // Build per-seat order map — merge items from multiple holds for same seat
   const seatMap   = {};   // { P1: { items:[], holds:Set } }
   const seatOrder = [];
@@ -331,16 +337,18 @@ function TableCard({ table, holds, onBump, onRecall, onCancel }) {
               <div style={{ fontSize:9, fontWeight:600, color: allDone ? T.textMuted : uColor }}>{uLabel}</div>
               <div style={{ fontSize:20, fontWeight:800, color: allDone ? T.textMuted : uColor, fontFamily:"monospace", lineHeight:1.1 }}>{mins}m</div>
             </div>
-            {/* Cancel whole table */}
-            <button
-              onClick={() => holds.forEach(h => onCancel(h.id))}
-              title="Cancel entire table order"
-              style={{
-                background:"transparent", border:`1px solid ${T.border}`,
-                borderRadius:4, color:T.textMuted, cursor:"pointer",
-                fontSize:14, lineHeight:1, padding:"2px 6px", marginTop:2,
-              }}
-            >✕</button>
+            {/* Cancel whole table — managers and admins only */}
+            {(user?.role === "admin" || user?.role === "manager") && (
+              <button
+                onClick={() => holds.forEach(h => onCancel(h.id))}
+                title="Cancel entire table order"
+                style={{
+                  background:"transparent", border:`1px solid ${T.border}`,
+                  borderRadius:4, color:T.textMuted, cursor:"pointer",
+                  fontSize:14, lineHeight:1, padding:"2px 6px", marginTop:2,
+                }}
+              >✕</button>
+            )}
           </div>
         </div>
 
@@ -526,7 +534,7 @@ function TableCard({ table, holds, onBump, onRecall, onCancel }) {
 
 
 // --- MAIN KDS COMPONENT -------------------------------------------------------
-export default function KitchenDisplay({ holdList, setHoldList }) {
+export default function KitchenDisplay({ holdList, setHoldList, readOnly = false, user, onLogout }) {
   const [station,    setStation]    = useState("all");
   const [showBumped, setShowBumped] = useState(false);
   const [tick,       setTick]       = useState(0);
@@ -725,6 +733,35 @@ export default function KitchenDisplay({ holdList, setHoldList }) {
           )}
         </div>
 
+        {/* Logout - only for kitchen staff, not manager */}
+        {onLogout && user?.role === "kitchen" && (
+          <button
+            onClick={onLogout}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 6,
+              border: "1px solid #333",
+              background: "transparent",
+              color: "#9ca0a8",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color="#ef4444"; e.currentTarget.style.borderColor="#ef444466"; }}
+            onMouseLeave={e => { e.currentTarget.style.color="#9ca0a8"; e.currentTarget.style.borderColor="#333"; }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            Sign Out
+          </button>
+        )}
+
         {/* Show bumped toggle */}
         <button 
           onClick={() => setShowBumped(v => !v)} 
@@ -854,6 +891,7 @@ export default function KitchenDisplay({ holdList, setHoldList }) {
                 onBump={handleBump}
                 onRecall={handleRecall}
                 onCancel={handleCancel}
+                user={user}
                 showBumped={showBumped}
               />
             ))}

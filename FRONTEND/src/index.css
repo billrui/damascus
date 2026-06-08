@@ -57,3 +57,178 @@ body {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+/* ============================================================
+   DAMASCUS HOTEL POS — Global Responsive Styles
+   Breakpoints: xs<480 sm<640 md<768 lg<1024 xl>=1024
+   ============================================================ */
+
+/* ── Touch targets ──────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  button, [role="button"], input, select, textarea {
+    min-height: 44px;
+  }
+  input[type="number"], input[type="text"], input[type="password"],
+  input[type="email"], input[type="date"], select {
+    font-size: 16px !important; /* prevents iOS zoom */
+  }
+}
+
+/* ── Sidebar ────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .sidebar {
+    position: fixed !important;
+    left: -260px;
+    top: 0; bottom: 0;
+    z-index: 200;
+    transition: left 0.25s ease;
+    width: 260px !important;
+  }
+  .sidebar.open {
+    left: 0;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+  }
+  .sidebar-overlay {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 199;
+  }
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+}
+
+/* ── Tables ─────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .responsive-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+  .hide-mobile { display: none !important; }
+}
+@media (max-width: 1023px) {
+  .hide-tablet { display: none !important; }
+}
+@media (min-width: 768px) {
+  .show-mobile-only { display: none !important; }
+}
+
+/* ── Grid helpers ───────────────────────────────────────────── */
+@media (max-width: 639px) {
+  .grid-2-sm-1 { grid-template-columns: 1fr !important; }
+  .grid-3-sm-1 { grid-template-columns: 1fr !important; }
+  .grid-4-sm-2 { grid-template-columns: 1fr 1fr !important; }
+}
+@media (max-width: 767px) {
+  .grid-3-md-1 { grid-template-columns: 1fr !important; }
+  .grid-3-md-2 { grid-template-columns: 1fr 1fr !important; }
+}
+
+/* ── Card padding ───────────────────────────────────────────── */
+@media (max-width: 639px) {
+  .card-pad { padding: 12px !important; }
+  .page-pad { padding: 12px !important; }
+}
+@media (max-width: 767px) {
+  .card-pad { padding: 14px !important; }
+  .page-pad { padding: 14px 16px !important; }
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+@media (max-width: 639px) {
+  .text-xl  { font-size: 18px !important; }
+  .text-2xl { font-size: 22px !important; }
+  .text-3xl { font-size: 26px !important; }
+}
+
+/* ── Modal ──────────────────────────────────────────────────── */
+@media (max-width: 639px) {
+  .modal-box {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border-radius: 16px 16px 0 0 !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    max-height: 90vh !important;
+  }
+}
+
+/* ── POS specific ───────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Waiter/Cashier full width */
+  .pos-split { flex-direction: column !important; }
+  .pos-left  { width: 100% !important; max-height: 40vh; border-right: none !important; border-bottom: 1px solid #1e2a3a; }
+  .pos-right { width: 100% !important; flex: 1; }
+
+  /* Menu grid — 2 cols on mobile */
+  .menu-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+  .menu-card { padding: 10px 6px !important; }
+
+  /* Table buttons — 3 cols on mobile */
+  .table-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 8px !important;
+  }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .menu-grid { grid-template-columns: repeat(3, 1fr) !important; }
+}
+
+/* ── Kitchen Display ────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .kds-grid { grid-template-columns: 1fr !important; }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .kds-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
+
+/* ── Login ──────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .login-left  { display: none !important; }
+  .login-right { width: 100% !important; min-height: 100vh; }
+}
+
+/* ── Reports / Inventory tables ─────────────────────────────── */
+@media (max-width: 767px) {
+  .inv-table th:nth-child(n+4),
+  .inv-table td:nth-child(n+4) { display: none; }
+  .report-table th:nth-child(n+5),
+  .report-table td:nth-child(n+5) { display: none; }
+}
+
+/* ── Scrollbar thin on mobile ───────────────────────────────── */
+@media (max-width: 767px) {
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+}
+
+/* ── Safe area (notch phones) ───────────────────────────────── */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .bottom-nav-safe {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  .fixed-bottom-safe {
+    bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ── Animations ─────────────────────────────────────────────── */
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-slide-up { animation: slideUp 0.2s ease; }
+.animate-fade-in  { animation: fadeIn 0.15s ease; }

@@ -49,12 +49,12 @@ const fmtTime = () => {
   return now.toTimeString().slice(0, 5);
 };
 
-const DARK_BG  = "#1A1A1A";
-const GOLD     = "#C5A059";
-const ORANGE   = "#B8860B";
-const GREEN    = "#2E7D64";
-const RED      = "#8B3A3A";
-const GRAY_BG  = "#F5F2EB";
+const DARK_BG  = "#FFFFFF";
+const GOLD     = "#16a34a";
+const ORANGE   = "#D97706";
+const GREEN    = "#16a34a";
+const RED      = "#DC2626";
+const GRAY_BG  = "#FFFFFF";
 
 // --- TOAST --------------------------------------------------------------------
 function Toast({ msg }) {
@@ -100,8 +100,8 @@ export function OpenShiftModal({ user, onOpen, onClose }) {
 
         {/* Header */}
         <div style={{ background:DARK_BG, padding:"20px 24px 16px" }}>
-          <div style={{ fontSize:15, fontWeight:700, color:GOLD, letterSpacing:"0.5px" }}>Open New Shift</div>
-          <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:3 }}>
+          <div style={{ fontSize:15, fontWeight:700, color:"#FFFFFF", letterSpacing:"0.5px" }}>Open New Shift</div>
+          <div style={{ fontSize:10, color:"#555555", marginTop:3 }}>
             {user.name} — {new Date().toLocaleDateString("en-KE", { weekday:"long", day:"numeric", month:"long" })}
           </div>
         </div>
@@ -326,8 +326,8 @@ function CloseShiftModal({ shift, onClose, onConfirm }) {
 
         {/* Header */}
         <div style={{ background:DARK_BG, padding:"20px 24px 16px", borderRadius:"8px 8px 0 0" }}>
-          <div style={{ fontSize:15, fontWeight:700, color:GOLD, letterSpacing:"0.5px" }}>Close Shift</div>
-          <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
+          <div style={{ fontSize:15, fontWeight:700, color:"#15803d", letterSpacing:"0.5px" }}>Close Shift</div>
+          <div style={{ fontSize:10, color:"#555555", marginTop:2 }}>
             {shift.cashier || shift.opened_by_name || "Staff"} — Opened {shift.openedAt||""} — {new Date().toLocaleDateString("en-KE")}
           </div>
         </div>
@@ -443,7 +443,7 @@ function ZReportModal({ shift, onClose }) {
         <div style={{ background:DARK_BG, padding:"20px 24px 16px", borderRadius:"8px 8px 0 0", textAlign:"center" }}>
           <div style={{ fontSize:10, color:GOLD, fontWeight:600, letterSpacing:2, marginBottom:4, textTransform:"uppercase" }}>Z-REPORT</div>
           <div style={{ fontSize:17, fontWeight:600, color:"#FFFFFF", letterSpacing:"0.5px" }}>DAMASCUS HOTEL</div>
-          <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
+          <div style={{ fontSize:10, color:"#555555", marginTop:2 }}>
             {shift.date} - {shift.openedAt} - {shift.closedAt || "Open"} - {shift.cashier || shift.opened_by_name || "Staff"}
           </div>
           <div style={{ fontSize:10, color:"rgba(255,255,255,0.3)", marginTop:1 }}>Shift: {shift.id}</div>
@@ -462,6 +462,34 @@ function ZReportModal({ shift, onClose }) {
             <Row label="Discounts Given"  val={`KES ${(shift.discounts||0).toLocaleString()}`} color={RED} />
             <Row label="Void Amount"      val={`KES ${voidTotal.toLocaleString()}`} color={RED} />
           </div>
+
+          {/* Top Selling Items */}
+          {(shift.sales||[]).length > 0 && (() => {
+            const counts = {};
+            for (const s of (shift.sales||[])) {
+              for (const item of (s.items||[])) {
+                const name = item.name || item.menu_item_name || "Unknown";
+                counts[name] = (counts[name] || { qty: 0, revenue: 0 });
+                counts[name].qty += item.qty || 1;
+                counts[name].revenue += (item.price || 0) * (item.qty || 1);
+              }
+            }
+            const top = Object.entries(counts).sort((a,b) => b[1].qty - a[1].qty).slice(0,10);
+            if (top.length === 0) return null;
+            return (
+              <div style={{ marginBottom:20 }}>
+                <div style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", letterSpacing:1, marginBottom:8, textTransform:"uppercase" }}>Top Selling Items</div>
+                {top.map(([name, d], i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:"1px solid #F0EDE6" }}>
+                    <span style={{ fontSize:10, color:"#7A7A7A", width:16 }}>{i+1}</span>
+                    <span style={{ flex:1, fontSize:11, color:"#1A1A1A", fontWeight:500 }}>{name}</span>
+                    <span style={{ fontSize:11, color:GREEN, fontWeight:700, minWidth:40, textAlign:"right" }}>{d.qty}x</span>
+                    <span style={{ fontSize:11, color:"#1A1A1A", fontWeight:600, minWidth:80, textAlign:"right" }}>KES {d.revenue.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Payment Breakdown */}
           <div style={{ marginBottom:20 }}>
@@ -721,28 +749,30 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
   };
 
   return (
-    <div style={{ background:"#FFFFFF", borderRadius:8, border:`1px solid ${GOLD}`, padding:0, overflow:"hidden", boxShadow:`0 2px 8px ${GOLD}20` }}>
+    <div style={{ background:"#FFFFFF", borderRadius:8, border:"1px solid #D1D5DB", padding:0, overflow:"hidden", boxShadow:`0 2px 8px ${GOLD}20` }}>
       {/* Active header */}
       <div style={{ background:DARK_BG, padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
           <span style={{ width:8, height:8, borderRadius:"50%", background:"#22C55E", display:"inline-block", boxShadow:"0 0 0 2px rgba(34,197,94,0.2)" }} />
           <div>
-            <div style={{ color:GOLD, fontWeight:600, fontSize:12, letterSpacing:"0.5px" }}>ACTIVE SHIFT - {shift.ref||shift.shift_ref||shift.id}</div>
-            <div style={{ color:"rgba(255,255,255,0.4)", fontSize:9 }}>
-              Opened {shift.openedAt||""} - Float KES {(parseFloat(shift.float||shift.opening_float||0)).toLocaleString()} - {shift.cashier||shift.opened_by_name||"Staff"}
+            <div style={{ color:"#1A1A1A", fontWeight:600, fontSize:12, letterSpacing:"0.5px" }}>ACTIVE SHIFT - {shift.ref||shift.shift_ref||shift.id}</div>
+            <div style={{ color:"#555555", fontSize:9 }}>
+              Cashier: {shift.cashier||shift.opened_by_name||"Staff"} · Opened {shift.openedAt||""} · Float KES {(parseFloat(shift.float||shift.opening_float||0)).toLocaleString()}
             </div>
           </div>
         </div>
         <div style={{ display:"flex", gap:8 }}>
-          <button onClick={() => setShowPetty(true)} style={{ padding:"6px 12px", borderRadius:4, border:"1px solid rgba(255,255,255,0.15)", background:"transparent", color:"rgba(255,255,255,0.7)", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
-            Petty Cash
-          </button>
-          <button onClick={() => setShowZReport(true)} style={{ padding:"6px 12px", borderRadius:4, border:`1px solid ${GOLD}`, background:"transparent", color:GOLD, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
-            X-Read
-          </button>
-          <button onClick={onCloseShift} style={{ padding:"6px 14px", borderRadius:4, border:"none", background:RED, color:"#FFFFFF", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
-            Close Shift
-          </button>
+          {user?.role !== "manager" && (
+            <button onClick={() => setShowPetty(true)} style={{ padding:"6px 12px", borderRadius:4, border:"1px solid #D1D5DB", background:"transparent", color:"#555555", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
+              Petty Cash
+            </button>
+          )}
+
+          {user?.role !== "manager" && (
+            <button onClick={onCloseShift} style={{ padding:"6px 14px", borderRadius:4, border:"none", background:RED, color:"#FFFFFF", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
+              Close Shift
+            </button>
+          )}
         </div>
       </div>
 
@@ -793,6 +823,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
   const activeShift = activeShiftProp !== undefined ? activeShiftProp : _activeShiftLocal;
   const setActiveShift = setActiveShiftProp !== undefined ? setActiveShiftProp : _setActiveShiftLocal;
   const [modal,       setModal]       = useState(null); // open | close | detail | zreport
+  // Manager defaults to history tab to see all shifts
   const [detailShift, setDetailShift] = useState(null);
   const [toast,       setToast]       = useState("");
   const [tab,         setTab]         = useState("history"); // history | summary
@@ -1097,7 +1128,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                       >
                         <td style={{ padding:"9px 12px", fontSize:11, fontWeight:600, color:"#C5A059" }}>{s.id}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#7A7A7A" }}>{s.date}</td>
-                        <td style={{ padding:"9px 12px", fontSize:11 }}>{(s.cashier || s.opened_by_name || "Staff").split(" ")[0]}</td>
+                        <td style={{ padding:"9px 12px", fontSize:11, fontWeight:600 }}>{s.cashier || s.opened_by_name || "Staff"}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#7A7A7A", fontFamily:"monospace" }}>{s.openedAt}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#7A7A7A", fontFamily:"monospace" }}>{s.closedAt||"-"}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, textAlign:"center" }}>{(s.sales||[]).length}</td>
@@ -1194,7 +1225,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                   const byName = {};
                   shifts.forEach((s)=>{
                     const sName = s.cashier || s.opened_by_name || "Staff";
-                    if (!byName[sName]) byName[s.cashier]={ shifts:0, revenue:0, balanced:0, issues:0 };
+                    if (!byName[sName]) byName[sName]={ shifts:0, revenue:0, balanced:0, issues:0 };
                     byName[sName].shifts++;
                     byName[sName].revenue += shiftTotal(s);
                     const v = variance(s);

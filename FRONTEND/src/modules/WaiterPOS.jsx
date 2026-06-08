@@ -45,45 +45,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   });
   const ITEMS = propMenuItems || [];
 
-  // Auto-remove persons from table when all their orders are bumped
-  useEffect(() => {
-    setPersons(prevPersons => {
-      let changed = false;
-      const next = { ...prevPersons };
-      Object.keys(next).forEach(tbl => {
-        const tPersons = next[tbl] || [];
-        const pending = holdList.filter(h => h.table === tbl && h.status === "pending");
-        const toRemove = tPersons.filter(p => {
-          // Never remove the currently active person — they may be mid-order
-          if (tbl === table && p === person) return false;
-          const hasPending = pending.some(h =>
-            (Array.isArray(h.items) ? h.items
-              : (()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})())
-              .some(i => {
-                const m = (i.note||"").match(/^\[([^\]]+)\]/);
-                return m ? m[1] === p : p === "P1";
-              })
-          );
-          const hasCart = (carts[tbl+"||"+p]||[]).length > 0;
-          return !hasPending && !hasCart;
-        });
-        if (toRemove.length > 0) {
-          changed = true;
-          next[tbl] = tPersons.filter(p => !toRemove.includes(p));
-          setCarts(prev => {
-            const n = {...prev};
-            toRemove.forEach(p => delete n[tbl+"||"+p]);
-            return n;
-          });
-          setPerson(prev => toRemove.includes(prev)
-            ? (next[tbl][0] || null)
-            : prev
-          );
-        }
-      });
-      return changed ? next : prevPersons;
-    });
-  }, [holdList]);
+  // Persons are managed manually — no auto-removal
 
   // Poll for bumped holds every 5s as fallback if socket misses the event
   useEffect(() => {
@@ -113,6 +75,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const [modal,      setModal]      = useState(null);
   const [activeHold, setActiveHold] = useState(null);
   const [rightTab,   setRightTab]   = useState("menu");
+  const [heldOrders, setHeldOrders] = useState([]);  // local only — never sent to backend
   const [addMoreTarget, setAddMoreTarget] = useState(null); // {hold, person, items}
   const [editHold,   setEditHold]   = useState(null);
   const [openOrders, setOpenOrders] = useState({});         // { holdId: true/false } collapsed state
@@ -162,36 +125,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
       // Find which persons had items only in this hold
       setHoldList(prev => {
         const remaining = prev.filter(h => h.id !== holdId);
-
-        // For each person in this table, check if they still have holds or cart items
-        const tPersons = persons[table] || [];
-        const toRemove = tPersons.filter(p => {
-          const hasPendingHold = remaining.some(h =>
-            h.table === table &&
-            h.status === "pending" &&
-            (Array.isArray(h.items) ? h.items : (()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})())
-              .some(i => { const m=(i.note||"").match(/^\[([^\]]+)\]/); return m?m[1]===p:p==="P1"; })
-          );
-          const hasCartItems = (carts[key(table, p)] || []).length > 0;
-          return !hasPendingHold && !hasCartItems;
-        });
-
-        // Remove persons with no remaining orders or cart items
-        if (toRemove.length > 0) {
-          setPersons(prev => {
-            const upd = (prev[table] || []).filter(p => !toRemove.includes(p));
-            return { ...prev, [table]: upd };
-          });
-          setCarts(prev => {
-            const n = { ...prev };
-            toRemove.forEach(p => delete n[key(table, p)]);
-            return n;
-          });
-          if (toRemove.includes(person)) {
-            const upd = tPersons.filter(p => !toRemove.includes(p));
-            setPerson(upd.length > 0 ? upd[0] : null);
-          }
-        }
 
         return remaining;
       });
@@ -272,11 +205,40 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     } catch(e) { console.error("Send to kitchen failed:", e); }
   };
 
+  const handleHoldOrder = () => {
+    // Save cart locally as a held order — NOT sent to kitchen yet
+    if (!cart.length) return;
+    const holdId = "HELD-" + Date.now();
+    const heldItems = cart.map(item => ({
+      menu_item_id: String(item.id || "0"),
+      name:         item.name,
+      qty:          Number(item.qty) || 1,
+      price:        Number(item.price) || 0,
+      note:         "[" + person + "] " + (item.note || ""),
+    }));
+    const heldTotal = heldItems.reduce((s,i) => s + i.price*i.qty, 0);
+    // Store in local heldOrders — never sent to backend so never overwritten
+    setHeldOrders(p => [{
+      id:          holdId,
+      table:       table,
+      waiter:      user.name,
+      createdDate: new Date().toISOString(),
+      items:       heldItems,
+      total:       heldTotal,
+      status:      "held",
+      _person:     person,
+    }, ...p]);
+    setCart([]);
+    setModal("held");
+    setTimeout(() => setModal(null), 2000);
+  };
+
   const handleAddToHold = async hold => {
     if (!cart.length) return;
     // Create a NEW separate hold for these items — keeps each send independent in kitchen
     const newItems = cart.map(c=>({
-      menu_item_id:String(c.id), name:c.name, qty:c.qty, price:c.price, note:"["+person+"] "+(c.note||""),
+      menu_item_id:String(c.id), name:c.name, qty:c.qty, price:c.price,
+      note:"["+person+"] "+(c.note||""),
     }));
     const newSub   = newItems.reduce((s,i)=>s+i.price*i.qty,0);
     const newTotal = newSub + newSub*TAX + newSub*SVC;
@@ -379,7 +341,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     <div style={{flex:1,display:"flex",overflow:"hidden",background:T.bg,fontFamily:T.font,color:T.textPrimary}}>
 
       {/* ── LEFT PANEL ── */}
-      <div style={{width:340,display:"flex",flexDirection:"column",background:T.surface,borderRight:"1px solid "+T.border}}>
+      <div style={{width:"clamp(120px,35vw,340px)",display:"flex",flexDirection:"column",background:T.surface,borderRight:"1px solid "+T.border}}>
 
         {/* Header */}
         <div style={{padding:"10px 12px",borderBottom:"1px solid "+T.border}}>
@@ -389,14 +351,14 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
           </div>
 
           {/* Table grid */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
             {TABLES.map(t => {
               const hasPending = holdList.some(h=>h.table===t&&h.status==="pending");
               const hasBumped  = holdList.some(h=>h.table===t&&h.status==="bumped");
               const isActive   = table===t;
               return (
                 <button key={t} onClick={()=>switchTable(t)} style={{
-                  padding:"14px 6px",borderRadius:8,cursor:"pointer",fontSize:15,fontWeight:800,minHeight:56,
+                  padding:"4px 1px",borderRadius:5,cursor:"pointer",fontSize:9,fontWeight:700,
                   border:"1px solid "+(isActive?T.amber:hasBumped?T.green:hasPending?T.amber+"55":T.border),
                   background:isActive?T.amber:hasBumped?T.green+"22":hasPending?T.amber+"15":T.card,
                   color:isActive?T.bg:hasBumped?T.green:hasPending?T.amber:T.textSecondary,
@@ -436,14 +398,14 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
             </div>
           )}
 
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(70px,1fr))",gap:8,padding:"4px 0"}}>
             {tablePersons.map(p => {
               const pItems    = carts[key(table,p)]||[];
               const cartCount = pItems.reduce((s,i)=>s+i.qty,0);
               const cartTotal = pItems.reduce((s,i)=>s+i.price*i.qty,0);
               const isAct     = person===p;
-              // Sent orders for this person
-              // Sent items for this person (pending in kitchen)
+              const PERSON_COLORS = ["#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#06B6D4","#84CC16"];
+              const pColor = PERSON_COLORS[tablePersons.indexOf(p) % PERSON_COLORS.length];
               const sentItems = tableHolds.filter(h=>h.status==="pending").flatMap(h=>{
                 const hItems = Array.isArray(h.items)?h.items:(()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})();
                 return hItems.filter(i=>{ const m=(i.note||"").match(/^\[([^\]]+)\]/); return m?m[1]===p:p==="P1"; });
@@ -452,144 +414,51 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               const hasItems  = cartCount>0||sentCount>0;
 
               return (
-                <div key={p} style={{
-                  border:"1px solid "+(isAct?T.amber:T.border),
-                  borderRadius:8, overflow:"hidden",
-                  background:isAct?T.amber+"10":"transparent",
+                <button key={p} onClick={()=>setPerson(p)} style={{
+                  border:"2px solid "+(isAct?pColor:pColor+"80"),
+                  borderRadius:10, overflow:"hidden",
+                  background:isAct?pColor:pColor+"22",
+                  cursor:"pointer", padding:"12px 6px",
+                  display:"flex", flexDirection:"column",
+                  alignItems:"center", gap:4,
+                  transition:"all 0.15s",
+                  fontFamily:T.font,
+                  position:"relative",
+                  boxShadow:isAct?`0 4px 12px ${pColor}60`:"none",
+                  transform:isAct?"scale(1.06)":"scale(1)",
                 }}>
-                  {/* ── Person header — click to select/expand ── */}
-                  <div onClick={()=>setPerson(p)}
-                    style={{
-                      display:"flex",alignItems:"center",gap:6,
-                      padding:"12px 12px",cursor:"pointer",
-                      background: isAct ? T.amber+"08" : "transparent",
-                    }}>
-                    {/* Person pill */}
-                    <span style={{
-                      padding:"10px 20px",borderRadius:20,fontSize:16,fontWeight:800,
-                      border:"2px solid "+(isAct?T.amber:T.border),
-                      background:isAct?T.amber:"transparent",
-                      color:isAct?T.bg:T.textSecondary,
-                      flexShrink:0,letterSpacing:0.5,
-                    }}>{p}</span>
-                    {isAct && <span style={{fontSize:9,fontWeight:700,color:T.amber,letterSpacing:0.5}}>ACTIVE</span>}
-                    {/* Summary badges */}
-                    <div style={{flex:1,display:"flex",gap:4,flexWrap:"wrap"}}>
-                      {cartCount>0&&(
-                        <span style={{fontSize:9,padding:"1px 6px",borderRadius:10,background:T.amber+"25",color:T.amber,fontWeight:600}}>
-                          {cartCount} unsent
-                        </span>
-                      )}
-                      {sentCount>0&&(
-                        <span style={{fontSize:9,padding:"1px 6px",borderRadius:10,background:T.green+"25",color:T.green,fontWeight:600}}>
-                          {sentCount} in kitchen
-                        </span>
-                      )}
-                      {!hasItems&&(
-                        <span style={{fontSize:9,color:T.textMuted}}>no items yet</span>
-                      )}
-                    </div>
-                    {/* Chevron */}
-                    <span style={{fontSize:10,color:T.textMuted}}>{isAct?"▾":"▸"}</span>
-                    {/* Remove person */}
-                    {tablePersons.length>1&&(
-                      <button onClick={e=>{e.stopPropagation();removePerson(p);}} style={{
-                        background:"none",border:"none",color:T.red,
-                        cursor:"pointer",fontSize:13,padding:"0 2px",lineHeight:1,fontWeight:700,
-                      }}>×</button>
+                  {/* P label */}
+                  <span style={{
+                    fontSize:17, fontWeight:800,
+                    color:isAct?"#fff":pColor,
+                    letterSpacing:0.5,
+                  }}>{p}</span>
+                  {/* Status dot */}
+                  <div style={{display:"flex",gap:3,flexWrap:"wrap",justifyContent:"center"}}>
+                    {cartCount>0&&(
+                      <span style={{
+                        fontSize:8,padding:"1px 5px",borderRadius:8,
+                        background:isAct?"rgba(255,255,255,0.25)":T.amber+"25",
+                        color:isAct?"#fff":T.amber,fontWeight:700,
+                      }}>{cartCount}</span>
+                    )}
+                    {sentCount>0&&(
+                      <span style={{
+                        fontSize:8,padding:"1px 5px",borderRadius:8,
+                        background:isAct?"rgba(255,255,255,0.25)":T.green+"25",
+                        color:isAct?"#fff":T.green,fontWeight:700,
+                      }}>{sentCount}</span>
                     )}
                   </div>
-
-                  {/* ── Expanded content — only shown when P is active ── */}
-                  {isAct&&(
-                    <div style={{borderTop:"1px solid "+T.border+"55"}}>
-
-                      {/* ── Unsent cart items ── */}
-                      {pItems.length>0&&(
-                        <div style={{padding:"6px 8px 4px"}}>
-                          <div style={{fontSize:9,fontWeight:700,color:T.amber,marginBottom:4}}>🛒 NOT YET SENT</div>
-                          {pItems.map(item=>(
-                            <div key={item.id} style={{
-                              display:"flex",alignItems:"center",gap:6,
-                              padding:"3px 0",fontSize:11,
-                              borderBottom:"1px solid "+T.border+"33",
-                            }}>
-                              <span style={{color:T.amber,fontWeight:700,minWidth:18}}>{item.qty}×</span>
-                              <span style={{flex:1,color:T.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</span>
-                              <span style={{color:T.textSecondary,fontSize:10,marginRight:4}}>{fmt(item.price*item.qty)}</span>
-                              <button onClick={()=>removeItem(item.id)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:13,padding:0,lineHeight:1,fontWeight:700}}>×</button>
-                            </div>
-                          ))}
-                          <div style={{textAlign:"right",fontSize:11,fontWeight:700,color:T.amber,marginTop:3}}>{fmt(cartTotal)}</div>
-                        </div>
-                      )}
-
-                      {/* ── Sent-to-kitchen orders for this person ── */}
-                      {sentItems.length>0&&(
-                        <div style={{padding:"6px 8px 4px",borderTop:pItems.length>0?"1px solid "+T.border+"44":"none"}}>
-                          <div style={{fontSize:9,fontWeight:700,color:T.green,marginBottom:4}}>🍳 IN KITCHEN</div>
-                          {/* Group sent items by hold */}
-                          {tableHolds.filter(h=>h.status==="pending").map(h=>{
-                            const hItems=(Array.isArray(h.items)?h.items:(()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})());
-                            const mine=hItems.filter(i=>{const m=(i.note||"").match(/^\[([^\]]+)\]/);return m?m[1]===p:p==="P1";});
-                            if(mine.length===0) return null;
-                            const mTotal=mine.reduce((s,i)=>s+i.price*i.qty,0);
-                            return (
-                              <div key={h.id} style={{
-                                background:T.card,border:"1px solid "+T.border,
-                                borderRadius:6,marginBottom:6,overflow:"hidden",
-                              }}>
-                                {/* Order header */}
-                                <div style={{
-                                  background:T.green+"12",padding:"5px 8px",
-                                  display:"flex",justifyContent:"space-between",alignItems:"center",
-                                }}>
-                                  <span style={{fontSize:9,fontWeight:700,color:T.green}}>🍳 Sent · {h.createdDate}</span>
-                                  <div style={{display:"flex",gap:4}}>
-                                    {/* Edit — add more to this order */}
-                                    <button onClick={()=>{setEditHold(h);setPerson(p);}} style={{
-                                      padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,
-                                      border:"1px solid "+T.amber,background:T.amber+"18",
-                                      color:T.amber,cursor:"pointer",
-                                    }}>+ Edit</button>
-                                    {/* Cancel order with prompt */}
-                                    <button onClick={()=>setCancelTarget(h)} style={{
-                                      padding:"2px 8px",borderRadius:4,fontSize:9,fontWeight:700,
-                                      border:"1px solid "+T.red,background:T.red+"18",
-                                      color:T.red,cursor:"pointer",
-                                    }}>✕ Cancel</button>
-                                  </div>
-                                </div>
-                                {/* Order items */}
-                                <div style={{padding:"4px 8px 6px"}}>
-                                  {mine.map((item,idx)=>{
-                                    const cn=item.note?item.note.replace(/^\[[^\]]+\]\s*/,"").trim():"";
-                                    return (
-                                      <div key={idx} style={{
-                                        display:"flex",justifyContent:"space-between",
-                                        fontSize:11,padding:"2px 0",
-                                        borderBottom:idx<mine.length-1?"1px solid "+T.border+"33":"none",
-                                      }}>
-                                        <span style={{color:T.textSecondary}}>
-                                          {item.qty}× {item.name}
-                                          {cn&&<span style={{color:T.amber,fontStyle:"italic"}}> · {cn}</span>}
-                                        </span>
-                                        <span style={{fontWeight:600,color:T.textPrimary}}>{fmt(item.price*item.qty)}</span>
-                                      </div>
-                                    );
-                                  })}
-                                  <div style={{textAlign:"right",fontSize:11,fontWeight:700,color:T.green,marginTop:3}}>{fmt(mTotal)}</div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-
-                    </div>
+                  {/* Remove × */}
+                  {tablePersons.length>1&&(
+                    <span onClick={e=>{e.stopPropagation();removePerson(p);}} style={{
+                      position:"absolute",top:2,right:4,
+                      fontSize:12,color:isAct?"rgba(255,255,255,0.7)":T.textMuted,
+                      fontWeight:700,lineHeight:1,cursor:"pointer",
+                    }}>×</span>
                   )}
-                </div>
+                </button>
               );
             })}
 
@@ -668,12 +537,26 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
             )}
             {editHold?(
               <button onClick={()=>handleAddToHold(editHold)} style={{width:"100%",padding:"11px",borderRadius:10,border:"none",cursor:"pointer",background:"linear-gradient(135deg,#059669,#047857)",color:"#fff",fontWeight:800,fontSize:13,fontFamily:T.font}}>
-                ✓ ADD TO ORDER & SEND TO KITCHEN
+                ADD TO ORDER & SEND TO KITCHEN
               </button>
             ):(
-              <button onClick={handleSendKitchen} style={{width:"100%",padding:"11px",borderRadius:10,border:"none",cursor:"pointer",background:"linear-gradient(135deg,"+T.amber+",#d97706)",color:T.bg,fontWeight:800,fontSize:13,fontFamily:T.font}}>
-                SEND {person} TO KITCHEN
-              </button>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={handleHoldOrder} style={{
+                  flex:1, padding:"11px",borderRadius:10,cursor:"pointer",
+                  border:"2px solid "+T.border,
+                  background:T.card,color:T.textSecondary,
+                  fontWeight:700,fontSize:12,fontFamily:T.font,
+                }}>
+                  Hold
+                </button>
+                <button onClick={handleSendKitchen} style={{
+                  flex:2, padding:"11px",borderRadius:10,border:"none",cursor:"pointer",
+                  background:"linear-gradient(135deg,"+T.amber+",#d97706)",
+                  color:T.bg,fontWeight:800,fontSize:13,fontFamily:T.font,
+                }}>
+                  SEND {person} TO KITCHEN
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -689,8 +572,10 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
           background:T.surface,borderBottom:"1px solid "+T.border,
           padding:"0 14px",flexShrink:0,
         }}>
-          {[["menu","🍽 Menu"],["myorders","📋 My Orders"]].map(([tab,label])=>{
+          {[["menu","Menu"],["myorders","My Orders"],["held","Held"]].map(([tab,label])=>{
             const readyCount = holdList.filter(h=>h.status==="bumped").length;
+            const heldCount  = heldOrders.length;
+            const badge = tab==="myorders"?readyCount:tab==="held"?heldCount:0;
             return (
               <button key={tab} onClick={()=>setRightTab(tab)} style={{
                 padding:"11px 18px",border:"none",cursor:"pointer",
@@ -700,13 +585,13 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 transition:"all .12s",position:"relative",
               }}>
                 {label}
-                {tab==="myorders"&&readyCount>0&&(
+                {badge>0&&(
                   <span style={{
                     position:"absolute",top:6,right:2,
-                    background:T.green,color:"#fff",
+                    background:tab==="held"?T.amber:T.green,color:"#fff",
                     borderRadius:"50%",width:17,height:17,fontSize:9,fontWeight:800,
                     display:"flex",alignItems:"center",justifyContent:"center",
-                  }}>{readyCount}</span>
+                  }}>{badge}</span>
                 )}
               </button>
             );
@@ -835,6 +720,89 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                         </div>
                       );
                     })}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* ── HELD ORDERS VIEW ── */}
+        {rightTab==="held"&&(
+          <div style={{flex:1,overflowY:"auto",padding:14}}>
+            {heldOrders.length===0?(
+              <div style={{textAlign:"center",padding:"48px 0",color:T.textMuted}}>
+                <div style={{fontSize:40,marginBottom:12,color:T.textFaint}}>-</div>
+                <div style={{fontSize:13,fontWeight:600,color:T.textSecondary}}>No held orders</div>
+                <div style={{fontSize:11,marginTop:4}}>Tap Hold when taking an order to save it here</div>
+              </div>
+            ):(
+              heldOrders.map(h=>{
+                const hItems = Array.isArray(h.items)?h.items:[];
+                const hTotal = hItems.reduce((s,i)=>s+(i.price||0)*i.qty,0);
+                const hPerson = h._person || (hItems[0]?.note||"").match(/^\[([^\]]+)\]/)?.[1] || "P1";
+                return (
+                  <div key={h.id} style={{
+                    background:T.card,border:"1px solid "+T.amber+"40",
+                    borderRadius:8,marginBottom:10,overflow:"hidden",
+                  }}>
+                    <div style={{
+                      background:T.amber+"12",padding:"8px 12px",
+                      display:"flex",justifyContent:"space-between",alignItems:"center",
+                      borderBottom:"1px solid "+T.amber+"25",
+                    }}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{
+                          padding:"3px 12px",borderRadius:20,fontSize:12,fontWeight:800,
+                          background:T.amber,color:T.bg,
+                        }}>{hPerson}</span>
+                        <span style={{fontSize:11,color:T.textMuted}}>
+                          {h.table||table} · Held
+                        </span>
+                      </div>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={async()=>{
+                          // Send held order to kitchen
+                          setHeldOrders(p=>p.filter(x=>x.id!==h.id));
+                          try {
+                            const {posApi} = await import("../api/index.js");
+                            const saved = await posApi.createHold({
+                              table_no: h.table||table,
+                              items: hItems,
+                              total: hTotal,
+                            });
+                            setHoldList(p=>[{...h,id:saved.id,status:"pending"},...p]);
+                            setHeldOrders(p=>p.filter(x=>x.id!==h.id));
+                          } catch(e){ console.error(e); }
+                          setModal("kitchen_sent");
+                          setTimeout(()=>setModal(null),2000);
+                        }} style={{
+                          padding:"4px 12px",borderRadius:5,fontSize:11,fontWeight:700,
+                          border:"1px solid "+T.amber,background:T.amber+"18",
+                          color:T.amber,cursor:"pointer",
+                        }}>Send to Kitchen</button>
+                        <button onClick={()=>setHoldList(p=>p.filter(x=>x.id!==h.id))} style={{
+                          padding:"4px 10px",borderRadius:5,fontSize:11,fontWeight:700,
+                          border:"1px solid "+T.red,background:T.red+"18",
+                          color:T.red,cursor:"pointer",
+                        }}>Delete</button>
+                      </div>
+                    </div>
+                    <div style={{padding:"8px 12px"}}>
+                      {hItems.map((item,idx)=>(
+                        <div key={idx} style={{
+                          display:"flex",justifyContent:"space-between",
+                          padding:"4px 0",fontSize:12,
+                          borderBottom:idx<hItems.length-1?"1px solid "+T.border:"none",
+                        }}>
+                          <span style={{color:T.textSecondary}}>{item.qty}× {item.name}</span>
+                          <span style={{fontWeight:600,color:T.textPrimary}}>KES {fmt(item.price*item.qty)}</span>
+                        </div>
+                      ))}
+                      <div style={{textAlign:"right",fontSize:12,fontWeight:700,color:T.amber,marginTop:6}}>
+                        Total: KES {fmt(hTotal)}
+                      </div>
+                    </div>
                   </div>
                 );
               })

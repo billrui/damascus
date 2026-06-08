@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, Card, CardHeader, CardBody, Input, Select, Btn, Badge, Modal, ConfirmModal, Toggle, SectionTitle } from "./shared";
 import { DEFAULT_ROLE_PERMISSIONS, CAN_CREATE_ROLES } from "../../data";
 
@@ -45,6 +45,8 @@ const PERMISSION_GROUPS = [
     perms: [
       { id: "can_manage_users",    label: "Manage user accounts",   hint: "Create, edit, disable user accounts" },
       { id: "can_view_audit",      label: "View audit logs",        hint: "See all system activity and actions" },
+      { id: "can_view_overhead",   label: "View net profit",        hint: "See revenue minus overhead deductions" },
+      { id: "can_edit_overhead",   label: "Edit overhead settings", hint: "Modify overhead costs and utility values" },
       { id: "can_backup",          label: "Backup system data",     hint: "Export and backup the database" },
       { id: "can_change_settings", label: "Change system settings", hint: "Modify business profile and POS config" },
     ],
@@ -53,7 +55,7 @@ const PERMISSION_GROUPS = [
 
 const DEFAULT_MATRIX = {
   admin:       Object.fromEntries(PERMISSION_GROUPS.flatMap(g => g.perms).map(p => [p.id, true])),
-  manager:     { can_delete_sale:false, can_give_discount:true, can_edit_price:false, can_split_bill:true, can_void_item:true, can_hold_order:true, can_adjust_stock:true, can_receive_stock:true, can_issue_stock:true, can_write_off:true, can_add_item:true, can_edit_item:true, can_view_reports:true, can_export_reports:true, can_view_cost:true, can_view_variance:true, can_manage_users:false, can_view_audit:true, can_backup:false, can_change_settings:false },
+  manager:     { can_delete_sale:false, can_give_discount:true, can_edit_price:false, can_split_bill:true, can_void_item:true, can_hold_order:true, can_adjust_stock:true, can_receive_stock:true, can_issue_stock:true, can_write_off:true, can_add_item:true, can_edit_item:true, can_view_reports:true, can_export_reports:true, can_view_cost:true, can_view_variance:true, can_manage_users:false, can_view_audit:true, can_backup:false, can_change_settings:false, can_view_overhead:false, can_edit_overhead:false },
   cashier:     { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:true, can_void_item:false, can_hold_order:true, can_adjust_stock:false, can_receive_stock:false, can_issue_stock:false, can_write_off:false, can_add_item:false, can_edit_item:false, can_view_reports:false, can_export_reports:false, can_view_cost:false, can_view_variance:false, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
   storekeeper: { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:false, can_void_item:false, can_hold_order:false, can_adjust_stock:true, can_receive_stock:true, can_issue_stock:true, can_write_off:true, can_add_item:true, can_edit_item:true, can_view_reports:false, can_export_reports:false, can_view_cost:true, can_view_variance:true, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
   waiter:      { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:false, can_void_item:false, can_hold_order:true, can_adjust_stock:false, can_receive_stock:false, can_issue_stock:false, can_write_off:false, can_add_item:false, can_edit_item:false, can_view_reports:false, can_export_reports:false, can_view_cost:false, can_view_variance:false, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
@@ -423,7 +425,29 @@ function StaffTab({ users, setUsers, currentUser, toast }) {
 function PermissionsTab({ currentUser, toast }) {
   const [matrix, setMatrix] = useState(DEFAULT_MATRIX);
   const [dirty, setDirty]   = useState(false);
+  const [saving, setSaving] = useState(false);
   const isAdmin = currentUser.role === "admin";
+
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    import("../../api/index.js").then(({ settingsApi }) => {
+      settingsApi.get().then(s => {
+        if (s.permissions_matrix) {
+          try {
+            const saved = JSON.parse(s.permissions_matrix);
+            setMatrix(m => {
+              const merged = { ...m };
+              for (const role of Object.keys(saved)) {
+                merged[role] = { ...m[role], ...saved[role] };
+              }
+              return merged;
+            });
+          } catch {}
+        }
+        setLoaded(true);
+      }).catch(() => setLoaded(true));
+    });
+  }, []);
 
   const toggle = (role, permId) => {
     if (!isAdmin || role === "admin") return;
@@ -431,7 +455,37 @@ function PermissionsTab({ currentUser, toast }) {
     setDirty(true);
   };
 
-  const handleSave  = () => { setDirty(false); toast("Permissions matrix saved", "success"); };
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const { settingsApi, usersApi } = await import("../../api/index.js");
+      await settingsApi.update({ permissions_matrix: JSON.stringify(matrix) });
+      for (const role of ["manager","cashier","storekeeper","waiter"]) {
+        const base = matrix[role] || {};
+        const granted = Object.entries(base).filter(([,v]) => v === true).map(([k]) => String(k));
+        await usersApi.updateRolePermissions(role, granted);
+      }
+      setDirty(false);
+      // Re-load saved matrix to confirm it persisted
+      const { settingsApi: sApi } = await import("../../api/index.js");
+      const s = await sApi.get();
+      if (s.permissions_matrix) {
+        try {
+          const saved = JSON.parse(s.permissions_matrix);
+          setMatrix(m => {
+            const merged = { ...m };
+            for (const role of Object.keys(saved)) {
+              merged[role] = { ...m[role], ...saved[role] };
+            }
+            return merged;
+          });
+        } catch {}
+      }
+      toast("Permissions saved and applied", "success");
+    } catch(e) {
+      toast("Failed to save: " + e.message, "error");
+    } finally { setSaving(false); }
+  };
   const handleReset = () => { setMatrix(DEFAULT_MATRIX); setDirty(false); toast("Permissions reset to defaults", "success"); };
   const countGranted = role => Object.values(matrix[role]).filter(Boolean).length;
 
@@ -458,7 +512,7 @@ function PermissionsTab({ currentUser, toast }) {
       {isAdmin && dirty && (
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 20 }}>
           <Btn variant="secondary" onClick={handleReset}>Reset Defaults</Btn>
-          <Btn variant="primary" onClick={handleSave}>Save Permissions</Btn>
+          <Btn variant="primary" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Permissions"}</Btn>
         </div>
       )}
 

@@ -115,7 +115,7 @@ export default function ManagerPOS({
   const now         = useNow();
   const { mobile, tablet } = useBreakpoint();
 
-  const [tab,        setTab]        = useState("new_sale");
+  const [tab,        setTab]        = useState(defaultTab || "new_sale");
   const [cart,       setCart]       = useState([]);
   const [table,      setTable]      = useState("T01");
   const [category,   setCategory]   = useState("all");
@@ -269,14 +269,7 @@ export default function ManagerPOS({
         <div style={{ display:"flex", padding:mobile?"0 8px":"0 16px", overflowX:"auto" }}>
           <TabBtn label="New Sale"
             active={tab==="new_sale"} onClick={()=>setTab("new_sale")} />
-          <TabBtn label="Kitchen Monitor"
-            badgeVal={kitchenWarn||undefined}
-            badgeColor={kitchenAlert>0?"#ef4444":"#d97706"}
-            active={tab==="kitchen"} onClick={()=>setTab("kitchen")} />
-          <TabBtn label="Open Invoices"
-            badgeVal={invoiceWarn||undefined}
-            badgeColor={invoiceAlert>0?"#ef4444":"#d97706"}
-            active={tab==="invoices"} onClick={()=>setTab("invoices")} />
+
         </div>
       </div>
 
@@ -583,6 +576,7 @@ export default function ManagerPOS({
               holdList={holdList}
               setHoldList={setHoldList}
               readOnly={true}
+              user={user}
             />
           </div>
         )}
@@ -747,10 +741,17 @@ export default function ManagerPOS({
           display:"flex", alignItems:"stretch",
           boxShadow:"0 -4px 24px rgba(0,0,0,0.4)",
         }}>
+          {/* Back button */}
+          <button onClick={() => window.dispatchEvent(new CustomEvent("navigate", { detail:"dashboard" }))}
+            style={{ flex:"0 0 56px", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, background:"none", border:"none", cursor:"pointer", padding:"8px 0", borderTop:"2px solid transparent" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            <span style={{ fontSize:10, fontWeight:500, color:"#6b7280" }}>Back</span>
+          </button>
+
           {[
-            { id:"new_sale", label:"New Sale",  badge:0 },
-            { id:"kitchen",  label:"Kitchen",   badge:kitchenWarn },
-            { id:"invoices", label:"Invoices",  badge:invoiceWarn },
+            { id:'new_sale', label:'New Sale',  badge:0 },
+            { id:'kitchen',  label:'Kitchen',   badge:kitchenWarn },
+            { id:'invoices', label:'Invoices',  badge:invoiceWarn },
           ].map(({ id, label, badge }) => {
             const active = tab === id;
             return (

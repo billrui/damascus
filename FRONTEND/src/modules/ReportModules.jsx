@@ -81,6 +81,36 @@ function exportPDF(profitData, kpis) {
 
 // --- REPORTS VIEW -------------------------------------------------------------
 export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
+  const [activeTab, setActiveTab] = useState("profitability");
+  const [itemPeriod, setItemPeriod] = useState("daily");
+
+  const topItems = (() => {
+    const now = new Date();
+    const todayStr = now.toISOString().split("T")[0];
+    const filtered = sales.filter(s => {
+      const d = new Date(s.date || s.sale_date || s.created_at);
+      if (itemPeriod === "daily") return (s.date || s.sale_date) === todayStr;
+      if (itemPeriod === "weekly") { const w = new Date(now); w.setDate(w.getDate()-7); return d >= w; }
+      if (itemPeriod === "monthly") { const m = new Date(now); m.setDate(m.getDate()-30); return d >= m; }
+      return true;
+    });
+    const counts = {};
+    for (const s of filtered) {
+      const hour = (s.sale_time || s.time || "00:00").split(":")[0];
+      for (const item of (s.items || [])) {
+        const name = item.name || item.menu_item_name || "Unknown";
+        if (!counts[name]) counts[name] = { qty: 0, revenue: 0, hours: {} };
+        counts[name].qty += item.qty || 1;
+        counts[name].revenue += (item.price || 0) * (item.qty || 1);
+        counts[name].hours[hour] = (counts[name].hours[hour] || 0) + (item.qty || 1);
+      }
+    }
+    return Object.entries(counts).sort((a, b) => b[1].qty - a[1].qty).slice(0, 15).map(([name, d]) => {
+      const peakHour = Object.entries(d.hours).sort((a,b) => b[1]-a[1])[0];
+      return { name, qty: d.qty, revenue: d.revenue, peakHour: peakHour ? `${peakHour[0]}:00` : "—" };
+    });
+  })();
+
   const totalRevenue = sales.reduce((s, x) => s + x.total, 0);
   const totalOrders  = sales.length;
 
@@ -111,6 +141,58 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 28, background: "#F5F2EB" }}>
+      {/* Tab switcher */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        {[["profitability", "Item Profitability"], ["top_items", "Top Selling Items"]].map(([id, label]) => (
+          <button key={id} onClick={() => setActiveTab(id)} style={{
+            padding: "8px 18px", borderRadius: 6, border: "none", cursor: "pointer",
+            fontWeight: 600, fontSize: 13,
+            background: activeTab === id ? "#1E3A5F" : "#fff",
+            color: activeTab === id ? "#fff" : "#6B7280",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* Top Selling Items Tab */}
+      {activeTab === "top_items" && (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            {[["daily","Today"],["weekly","This Week"],["monthly","This Month"]].map(([id,label]) => (
+              <button key={id} onClick={() => setItemPeriod(id)} style={{
+                padding: "6px 16px", borderRadius: 20, cursor: "pointer", fontWeight: 600, fontSize: 12,
+                background: itemPeriod === id ? "#16a34a" : "#fff",
+                color: itemPeriod === id ? "#fff" : "#6B7280",
+                border: "1px solid #E5E7EB",
+              }}>{label}</button>
+            ))}
+          </div>
+          {topItems.length === 0 ? (
+            <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, padding: 48, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>No sales data for this period</div>
+          ) : (
+            <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
+                {["#","Item","Sold","Revenue","Peak Time",""].map((h,i) => (
+                  <div key={i} style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase" }}>{h}</div>
+                ))}
+              </div>
+              {topItems.map((item, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "11px 16px", borderBottom: i < topItems.length-1 ? "1px solid #E5E7EB" : "none", alignItems: "center" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#9CA3AF" }}>{i+1}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{item.name}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#16a34a" }}>{item.qty}x</div>
+                  <div style={{ fontSize: 13, color: "#111827" }}>KES {item.revenue.toLocaleString()}</div>
+                  <div style={{ fontSize: 12, color: "#6B7280" }}>🕐 {item.peakHour}</div>
+                  <div style={{ width: "100%", height: 6, borderRadius: 3, background: "#F3F4F6" }}>
+                    <div style={{ width: `${Math.round((item.qty/topItems[0].qty)*100)}%`, height: "100%", background: "#16a34a", borderRadius: 3 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "profitability" && <div>
       <div style={{ marginBottom: 24 }}>
         <div style={{ 
           display: "flex", 
@@ -341,6 +423,7 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
           </div>
         </Card>
       </div>
+      </div>}
     </div>
   );
 }

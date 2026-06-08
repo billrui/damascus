@@ -7,6 +7,7 @@ import InventorySettings from "./settings/InventorySettings";
 import { ReceiptSettings, ReportsSettings } from "./settings/ReceiptReportsSettings";
 import SystemControls from "./settings/SystemControls";
 import AuditLogs from "./settings/AuditLogs";
+import OverheadSettings from "./OverheadSettings";
 
 const NAV_ITEMS = [
   { id: "business",  label: "Business Profile",  symbol: "-", roles: ["admin"] },
@@ -16,12 +17,13 @@ const NAV_ITEMS = [
   { id: "receipt",   label: "Receipt & Printing", symbol: "-", roles: ["admin", "manager"] },
   { id: "reports",   label: "Reports Settings",   symbol: "-", roles: ["admin", "manager"] },
   { id: "system",    label: "System Controls",    symbol: "-", roles: ["admin"] },
+  { id: "overhead",  label: "Overhead & Utilities", symbol: "-", roles: ["admin", "manager"], permission: "can_edit_overhead" },
   { id: "audit",     label: "Audit Logs",         symbol: "-", roles: ["admin"] },
 ];
 
 export default function SettingsView({ user, users, setUsers, ingredients = [] }) {
   const { toasts, toast } = useToast();
-  const allowedNav = NAV_ITEMS.filter(n => n.roles.includes(user.role));
+  const allowedNav = NAV_ITEMS.filter(n => n.roles.includes(user.role) && (!n.permission || user.role === "admin" || (user.permissions || []).includes(n.permission)));
   const [activeSection, setActiveSection] = useState(allowedNav[0]?.id || "business");
 
   // Lifted business profile so ReceiptSettings can sync header text automatically
@@ -41,6 +43,7 @@ export default function SettingsView({ user, users, setUsers, ingredients = [] }
       case "reports":     return <ReportsSettings {...props} />;
       case "system":      return <SystemControls {...props} />;
       case "audit":       return <AuditLogs {...props} />;
+      case "overhead":    return <OverheadSettings onBack={() => setActiveSection("business")} />;
       default:            return null;
     }
   };

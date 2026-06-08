@@ -180,8 +180,7 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
     if (!name.trim())                         e.name     = "Required";
     if (!category)                            e.category = "Required";
     if (!price || parseFloat(price) <= 0)     e.price    = "Required";
-    if (!recipe.some(r => r.ingredientId && parseFloat(r.qty) > 0))
-      e.recipe = "Link at least one ingredient so stock can auto-deduct";
+    // Recipe is optional — items like packaged goods don't need stock tracking
     setErrors(e);
     return Object.keys(e).length === 0;
   };

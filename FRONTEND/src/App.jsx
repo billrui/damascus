@@ -1,11 +1,14 @@
+import { itemsApi } from "./api/index.js";
 import { useState, useEffect } from "react";
 import { useApp }    from "./context/AppContext.jsx";
 import { ALL_NAV }   from "./data/constants.js";
 
 import LoginScreen   from "./components/LoginScreen.jsx";
-import { Sidebar, Topbar } from "./components/Layout.jsx";
+import { Sidebar, Topbar, SidebarOverlay } from "./components/Layout.jsx";
 
-import DashboardView  from "./modules/DashboardView.jsx";
+import DashboardView      from "./modules/DashboardView.jsx";
+import ProductionScreen   from "./modules/ProductionScreen.jsx";
+import CashierDashboard from "./modules/CashierDashboard.jsx";
 import POSView        from "./modules/POSView.jsx";
 import WaiterPOS      from "./modules/WaiterPOS.jsx";
 import CashierPOS     from "./modules/CashierPOS.jsx";
@@ -22,6 +25,7 @@ export default function RoyalPalmApp() {
   const {
     user, login, logout,
     users, setUsers,
+    overhead,
     menuItems, setMenuItems,
     ingredients, setIngredients,
     batches, setBatches,
@@ -42,6 +46,7 @@ export default function RoyalPalmApp() {
   } = useApp();
 
   const [activeNav, setActiveNav] = useState("dashboard");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Listen for navigate events from child components
   useEffect(() => {
@@ -94,7 +99,7 @@ export default function RoyalPalmApp() {
   if (user.role === "kitchen") {
     return (
       <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "#0A0E1A" }}>
-        <KitchenDisplay holdList={holdList} setHoldList={setHoldList} />
+        <KitchenDisplay holdList={holdList} setHoldList={setHoldList} user={user} onLogout={logout} />
       </div>
     );
   }
@@ -102,10 +107,17 @@ export default function RoyalPalmApp() {
   const renderView = () => {
     switch (activeNav) {
       case "dashboard":
+        if (user.role === "cashier")
+          return <CashierDashboard
+            sales={sales} activeShift={activeShift}
+            openInvoices={openInvoices} setActiveNav={setActiveNav} user={user} overhead={overhead} />;
         return <DashboardView
           sales={sales} batches={batches} storeIssues={storeIssues}
           wastage={wastage} setActiveNav={setActiveNav}
           ingredients={ingredients} menuItems={menuItems}
+          holdList={holdList}
+          overhead={overhead}
+          user={user}
         />;
 
       case "pos":
@@ -117,7 +129,10 @@ export default function RoyalPalmApp() {
             batches={batches} setBatches={setBatches} openInvoices={openInvoices}
             setOpenInvoices={setOpenInvoices} recipes={recipes} ingredients={ingredients}
             holdList={holdList} setHoldList={setHoldList} activeShift={activeShift} />;
-        if (user.role === "admin" || user.role === "manager")
+        if (user.role === "manager")
+          return <WaiterPOS user={user} menuItems={menuItems} holdList={holdList}
+            setHoldList={setHoldList} openInvoices={openInvoices} setOpenInvoices={setOpenInvoices} />;
+        if (user.role === "admin")
           return <ManagerPOS user={user} menuItems={menuItems} holdList={holdList}
             setHoldList={setHoldList} openInvoices={openInvoices} setOpenInvoices={setOpenInvoices}
             sales={sales} setSales={setSales} batches={batches} setBatches={setBatches}
@@ -136,7 +151,73 @@ export default function RoyalPalmApp() {
           activeShift={activeShift} setActiveShift={setActiveShift} menuItems={menuItems} />;
 
       case "kds":
-        return <KitchenDisplay holdList={holdList} setHoldList={setHoldList} />;
+        return <KitchenDisplay holdList={holdList} setHoldList={setHoldList} user={user} onLogout={logout} />;
+      case "production":
+        return <ProductionScreen onBack={() => setActiveNav("dashboard")} />;
+      case "open_orders":
+        return (
+          <div style={{ flex:1, overflowY:"auto", padding:24, background:"#F8FAFC" }}>
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:20, fontWeight:700, color:"#111827" }}>Open Orders</div>
+              <div style={{ fontSize:12, color:"#6B7280", marginTop:2 }}>All pending waiter orders not yet sent to cashier</div>
+            </div>
+            {holdList.filter(h=>h.status==="pending").length === 0 ? (
+              <div style={{ textAlign:"center", padding:"80px 0", color:"#9CA3AF" }}>
+                <div style={{ fontSize:48, marginBottom:12 }}>📋</div>
+                <div style={{ fontSize:15, fontWeight:600 }}>No open orders</div>
+                <div style={{ fontSize:12, marginTop:4 }}>All waiter orders have been processed</div>
+              </div>
+            ) : (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))", gap:16 }}>
+                {holdList.filter(h=>h.status==="pending").map(h=>{
+                  const items = Array.isArray(h.items)?h.items:(()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})();
+                  const total = items.reduce((s,i)=>s+(i.price||0)*i.qty,0);
+                  const createdAt = h.created_at ? new Date(h.created_at) : null;
+                  const ageMin = createdAt ? Math.floor((Date.now()-createdAt.getTime())/60000) : null;
+                  const isLate = ageMin !== null && ageMin >= 30;
+                  const isWarn = ageMin !== null && ageMin >= 15 && ageMin < 30;
+                  const borderColor = isLate ? "#DC2626" : isWarn ? "#D97706" : "#16a34a";
+                  const bgColor = isLate ? "#FEF2F2" : isWarn ? "#FFFBEB" : "#F0FDF4";
+                  return (
+                    <div key={h.id} style={{ background:"#fff", border:`2px solid ${borderColor}`, borderRadius:10, overflow:"hidden", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+                      <div style={{ background:bgColor, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <div>
+                          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <span style={{ padding:"3px 12px", borderRadius:20, fontSize:13, fontWeight:800, background:borderColor, color:"#fff" }}>
+                              {h.table || h.table_no || "Walk-in"}
+                            </span>
+                            {isLate && <span style={{ fontSize:11, fontWeight:700, color:"#DC2626" }}>⚠ {ageMin}m — May have left!</span>}
+                            {isWarn && !isLate && <span style={{ fontSize:11, fontWeight:700, color:"#D97706" }}>⏱ {ageMin}m — Getting late</span>}
+                            {!isLate && !isWarn && ageMin !== null && <span style={{ fontSize:11, color:"#16a34a" }}>{ageMin}m ago</span>}
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3 }}>
+                            <span style={{ fontSize:12, fontWeight:700, color:"#1E3A5F", background:"#DBEAFE", padding:"2px 8px", borderRadius:20 }}>👤 {h.waiter || h.waiter_name || "Unknown Waiter"}</span>
+                            <span style={{ fontSize:11, color:"#6B7280" }}>{h.createdDate || (createdAt ? createdAt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "—")}</span>
+                          </div>
+                        </div>
+                        <div style={{ fontSize:15, fontWeight:700, color:"#111827" }}>KES {total.toLocaleString()}</div>
+                      </div>
+                      <div style={{ padding:"10px 14px" }}>
+                        {items.slice(0,4).map((item,i)=>(
+                          <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", borderBottom: i<Math.min(items.length,4)-1?"1px solid #F3F4F6":"none" }}>
+                            <span style={{ color:"#374151" }}>{item.qty}× {item.name}</span>
+                            <span style={{ fontWeight:600 }}>KES {((item.price||0)*item.qty).toLocaleString()}</span>
+                          </div>
+                        ))}
+                        {items.length > 4 && <div style={{ fontSize:11, color:"#9CA3AF", marginTop:4 }}>+{items.length-4} more items</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      case "open_invoices":
+        return <CashierPOS user={user} sales={sales} setSales={setSales}
+          batches={batches} setBatches={setBatches} openInvoices={openInvoices}
+          setOpenInvoices={setOpenInvoices} recipes={recipes} ingredients={ingredients}
+          holdList={holdList} setHoldList={setHoldList} activeShift={activeShift} />;
 
       case "inventory":
       case "inventory:list":
@@ -149,8 +230,17 @@ export default function RoyalPalmApp() {
           user={user}
         />;
 
+      case "receive":
+        return <InventoryView
+          subView="receive"
+          batches={batches} setBatches={setBatches}
+          ingredients={ingredients} setIngredients={setIngredients}
+          storeIssues={storeIssues} setStoreIssues={setStoreIssues}
+          user={user}
+        />;
+
       case "inventory_readonly":
-        return <InventoryReadOnlyView batches={batches} />;
+        return <InventoryReadOnlyView batches={batches} ingredients={ingredients} />;
 
       case "expiry":
         return <ExpiryView batches={batches} setBatches={setBatches}
@@ -193,11 +283,13 @@ export default function RoyalPalmApp() {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "#0A0E1A" }}>
+      <SidebarOverlay show={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
       <Sidebar
         activeNav={activeNav}
-        setActiveNav={setActiveNav}
+        setActiveNav={e => { setActiveNav(e); setMobileMenuOpen(false); }}
         user={user}
         allowedNav={allowedNav}
+        mobileOpen={mobileMenuOpen}
         onLogout={logout}
         expiryAlertCount={expiryAlerts}
         lowStockCount={lowStockCount}

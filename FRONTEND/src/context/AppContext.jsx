@@ -11,7 +11,7 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import {
   authApi, usersApi, itemsApi, inventoryApi,
-  posApi, shiftsApi, reportsApi,
+  posApi, shiftsApi, reportsApi, settingsApi,
 } from "../api/index.js";
 import { classifyExpiry } from "../utils/index.js";
 import { ALL_NAV, ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, CAN_CREATE_ROLES } from "../data/constants.js";
@@ -28,6 +28,7 @@ export function AppProvider({ children }) {
 
   // -- App data ----------------------------------------------------------------
   const [users,       setUsers]       = useState([]);
+  const [overhead,    setOverhead]    = useState({});
   // Track deleted user ids so bootstrap/re-fetch never restores them
   const removedUserIds = useState(() => new Set())[0];
   const removedInvIds  = useState(() => new Set())[0];
@@ -111,6 +112,8 @@ export function AppProvider({ children }) {
         has("pos") || has("shift") ? posApi.invoices().catch(() => []) : Promise.resolve([]),
       ]);
 
+      // Load overhead settings separately
+      settingsApi.get().then(s => setOverhead(s)).catch(() => {});
       setUsers(usersData.filter(u => !removedUserIds.has(String(u.id))));
       setMenuItems(itemsData);
       setIngredients(ingredientsData);

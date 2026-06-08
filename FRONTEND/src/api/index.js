@@ -23,6 +23,7 @@ export const authApi = {
 
 export const usersApi = {
   list:   ()           => api.get("/users").then(r => r.data.users),
+  updateRolePermissions: (role, permissions) => api.post(`/users/role-permissions`, { role, permissions }).then(r => r.data),
   get:    (id)         => api.get(`/users/${id}`).then(r => r.data.user),
   create: (data)       => api.post("/users", data).then(r => r.data.user),
   update: (id, data)   => api.patch(`/users/${id}`, data).then(r => r.data.user),
@@ -130,6 +131,22 @@ export const reportsApi = {
 };
 
 // -- Offline sync --------------------------------------------------------------
+
+export const productionApi = {
+  // Groups
+  getGroups:    ()           => api.get('/production/groups').then(r => r.data),
+  createGroup:  (data)       => api.post('/production/groups', data).then(r => r.data),
+  updateGroup:  (id, data)   => api.put(`/production/groups/${id}`, data).then(r => r.data),
+  deleteGroup:  (id)         => api.delete(`/production/groups/${id}`).then(r => r.data),
+  // Batches
+  getBatches:   (params)     => api.get('/production/batches', { params }).then(r => r.data),
+  createBatch:  (data)       => api.post('/production/batches', data).then(r => r.data),
+  closeBatch:   (id, data)   => api.post(`/production/batches/${id}/close`, data).then(r => r.data),
+  // Live tracker
+  getLive:      ()           => api.get('/production/live').then(r => r.data),
+  // Sale deduction
+  saleDeduct:   (items)      => api.post('/production/sale-deduct', { items }).then(r => r.data),
+};
 
 export const syncApi = {
   flush:  (data) => api.post("/sync", data).then(r => r.data),

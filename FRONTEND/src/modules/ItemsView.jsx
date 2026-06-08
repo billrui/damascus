@@ -36,7 +36,7 @@ function buildStockRows(items, batches, ingredients) {
     return {
       ...item,
       code:      genItemCode(idx),
-      stock:     ing ? stock : Math.floor(Math.random() * 40),
+      stock:     item.made_to_order ? 999 : (Number(item.qty_available) > 0 ? Number(item.qty_available) : (ing ? stock : 0)),
       reorder,
       cost:      item.cost,
       rPrice:    item.price,
@@ -168,19 +168,7 @@ function TableToolbar({ search, setSearch, pageSize, setPageSize, onPageSizeChan
           {btn}
         </button>
       ))}
-      <span style={{ fontSize: 12, color: "#4A4A4A", marginLeft: 8 }}>Search:</span>
-      <input 
-        value={search} 
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ 
-          padding: "5px 10px", 
-          border: "1px solid #E5E0D5", 
-          borderRadius: 4, 
-          fontSize: 12, 
-          width: 180, 
-          outline: "none" 
-        }} 
-      />
+
     </div>
   );
 }
@@ -997,6 +985,16 @@ export default function ItemsView({ subView: propSubView = "new", batches, setBa
     if (!propMenuItems) return;
     setItems(propMenuItems.map((m) => ({ ...m, brand: m.brand || m.name.toUpperCase().slice(0, 8) })));
   }, [propMenuItems]);
+
+  // Fetch fresh stock on mount
+  useEffect(() => {
+    import("../api/index.js").then(({ itemsApi }) => {
+      itemsApi.stockAvailable().then(fresh => {
+        if (fresh?.length && propSetMenuItems) propSetMenuItems(fresh);
+      }).catch(() => {});
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reset local override whenever parent nav changes
   useEffect(() => { setLocalSubView(null); }, [propSubView]);
