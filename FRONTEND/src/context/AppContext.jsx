@@ -156,6 +156,9 @@ export function AppProvider({ children }) {
     "invoice:updated": (inv) => {
       setOpenInvoices(prev => prev.map(i => String(i.id) === String(inv.id) ? {...i,...inv} : i));
     },
+    "invoice:paid": (p) => {
+      setOpenInvoices(prev => prev.filter(i => String(i.id) !== String(p.id)));
+    },
     "hold:created": (hold) => {
       setHoldList(prev => {
         if (prev.find(h => String(h.id) === String(hold.id))) return prev;

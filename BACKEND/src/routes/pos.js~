@@ -62,9 +62,9 @@ const saleItemSchema = z.object({
 const createSaleSchema = z.object({
   items:        z.array(saleItemSchema).min(1),
   customer:     z.string().max(100).default('Walk-in'),
-  table_no:     z.string().max(20).nullable().optional(),
+  table_no:     z.string().max(20).optional(),
   payment:      z.enum(['cash','card','mpesa','credit','split']),
-  payment_ref:  z.string().max(100).nullable().optional(),
+  payment_ref:  z.string().max(100).optional(),
   tendered:     z.coerce.number().optional(),
   discount_pct: z.coerce.number().min(0).max(100).default(0),
   waiter_id:    z.coerce.number().int().optional(),
@@ -265,7 +265,7 @@ router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSa
       console.log('💰 PAID EMIT → invoice', open_invoice_id, 'table', completeSale.table_no || table_no);
       try {
         await db.query(
-          `UPDATE hold_orders SET status = 'cancelled', notes = 'paid-invoice'
+          `UPDATE hold_orders SET status = 'paid'
            WHERE id = $1 AND notes = 'open-invoice'`,
           [open_invoice_id]
         );
@@ -724,17 +724,14 @@ router.delete('/holds/:id', requirePermission('pos'), async (req, res, next) => 
 // ─── POST /api/pos/invoices ───────────────────────────────────────────────────
 router.post('/invoices', requirePermission('pos'), async (req, res, next) => {
   try {
-    const { table_no, items, total, discount_pct = 0, customer, source_hold_ids } = req.body;
-    const holdRef = (Array.isArray(source_hold_ids) && source_hold_ids.length)
-      ? source_hold_ids.join(',')
-      : `INV-OPEN-${Date.now()}`;
+    const { table_no, items, total, discount_pct = 0, customer } = req.body;
 
     const { rows: inv } = await db.query(
       `INSERT INTO hold_orders
          (hold_ref, table_no, waiter_id, items, total, status, notes)
        VALUES ($1, $2, $3, $4, $5, 'pending', 'open-invoice')
        RETURNING *`,
-      [holdRef, table_no, req.user.sub,
+      [`INV-OPEN-${Date.now()}`, table_no, req.user.sub,
        JSON.stringify({ items, discount_pct, customer }), total]
     );
 

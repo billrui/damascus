@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { MENU_CATEGORIES, TAX, SVC } from "../data";
 import { fmt } from "../utils";
 import { T, pillBtn, stepBtn, actionBtn, overlay } from "../posTheme";
 import { useSocket } from "../hooks/useSocket.js";
+import { useBreakpoint } from "../hooks/useBreakpoint.js";
 
-const TABLES  = ["T01","T02","T03","T04","T05","T06","T07","T08","T09","T10","T11","T12","WALK-IN"];
+const TABLES  = ["T01","T02","T03","T04","T05","T06","T07","T08","T09","T10","T11","T12","TAKEAWAY"];
 const MAX_PAX = 8;
 
 export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, setHoldList, openInvoices, setOpenInvoices }) {
@@ -13,7 +14,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const normalizeHold = (h) => ({
     ...h,
     id:          String(h.id),
-    table:       h.table ?? h.table_no ?? "Walk-in",
+    table:       h.table ?? h.table_no ?? "TAKEAWAY",
     waiter:      h.waiter ?? h.waiter_name ?? user?.name ?? "Staff",
     createdDate: h.createdDate ?? (h.created_at
       ? new Date(h.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})
@@ -42,6 +43,16 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     },
     "hold:deleted": ({ id }) => setHoldList(prev => prev.filter(h => String(h.id) !== String(id))),
     "invoice:updated": (inv) => setOpenInvoices(prev => prev.map(i => i.id === inv.id ? inv : i)),
+    "invoice:paid": (p) => {
+      const fromList = (openInvoices || []).find(i => String(i.id) === String(p?.id));
+      const tbl = p?.table_no || p?.table || fromList?.table || fromList?.table_no;
+      setOpenInvoices(prev => prev.filter(i => String(i.id) !== String(p?.id)));
+      if (!tbl) return;
+      setPaidTables(prev => ({ ...prev, [tbl]: true }));
+      const ts = Date.now();
+      setPaidFlash(prev => [...prev.filter(f => f.table !== tbl), { table: tbl, ts }]);
+      setTimeout(() => setPaidFlash(prev => prev.filter(f => f.ts !== ts)), 4500);
+    },
   });
   const ITEMS = propMenuItems || [];
 
@@ -75,6 +86,8 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const [modal,      setModal]      = useState(null);
   const [activeHold, setActiveHold] = useState(null);
   const [rightTab,   setRightTab]   = useState("menu");
+  const { mobile } = useBreakpoint();
+  const [mScreen, setMScreen] = useState("tables");  // mobile nav: tables|order|cart|ready|bills
   const [heldOrders, setHeldOrders] = useState([]);  // local only — never sent to backend
   const [addMoreTarget, setAddMoreTarget] = useState(null); // {hold, person, items}
   const [editHold,   setEditHold]   = useState(null);
@@ -82,6 +95,15 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const [noteTarget,   setNoteTarget]   = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null); // hold to cancel
   const [noteText,   setNoteText]   = useState("");
+
+  // ── Manager-override state for Cancel Order ────────────────────────────────────
+  // Waiters/cashiers must have a supervisor authorize a cancellation; managers
+  // and admins cancel directly. (Once usePermission lands, swap the role check
+  // for a can_void_item check.)
+  const needsOverride = !["admin", "manager"].includes(user.role);
+  const [overridePin,  setOverridePin]  = useState("");
+  const [overrideErr,  setOverrideErr]  = useState("");
+  const [overrideBusy, setOverrideBusy] = useState(false);
 
   // ── helpers ──────────────────────────────────────────────────────────────────
   const key         = (t, p) => t + "||" + p;
@@ -96,7 +118,12 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const switchTable = t => {
     setTable(t);
     const tPersons = persons[t] || [];
-    setPerson(tPersons.length > 0 ? tPersons[0] : null);
+    if (tPersons.length === 0) {
+      setPersons(p => ({ ...p, [t]: ["P1"] }));   // every table starts with P1
+      setPerson("P1");
+    } else {
+      setPerson(tPersons[0]);
+    }
     setSearch(""); setPage(0); setEditHold(null);
   };
 
@@ -129,8 +156,222 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
         return remaining;
       });
     } catch(e) { console.error(e); }
-    setCancelTarget(null);
+    closeCancel();
   };
+
+  // Reset the cancel modal and any override entry
+  const closeCancel = () => {
+    setCancelTarget(null);
+    setOverridePin("");
+    setOverrideErr("");
+    setOverrideBusy(false);
+  };
+
+  // Waiter/cashier path: verify a supervisor PIN, then cancel
+  const authorizeAndCancel = async () => {
+    if (overrideBusy) return;
+    setOverrideErr("");
+    setOverrideBusy(true);
+    try {
+      const { authApi } = await import("../api/index.js");
+      await authApi.authorize(overridePin, "cancel_order");
+      // authorize throws on a bad PIN (401) — reaching here means approved
+      await cancelHold(cancelTarget.id);
+    } catch (e) {
+      setOverrideErr("Invalid manager PIN");
+      setOverrideBusy(false);
+    }
+  };
+
+  // ── Build Bill (table-level) ───────────────────────────────────────────────────
+  // Default flow is SPLIT: persons start unassigned and the waiter groups whoever's
+  // paying together. "Whole table" / "Each separately" are secondary shortcuts. The
+  // whole table is billed in one session, so no partial-billing state persists.
+  const [billTarget,    setBillTarget]    = useState(null);  // { table, persons:[{person,items,subtotal}] }
+  const [customSel,     setCustomSel]     = useState([]);    // person ids ticked for the next bill
+  const [composedBills, setComposedBills] = useState([]);    // [{ id, personIds, items, subtotal, total }]
+  const [billBusy,      setBillBusy]      = useState(false);
+  const [billErr,       setBillErr]       = useState("");
+
+  // Recovery — recall a billed (but unpaid) table (manager PIN required)
+  const [lastBilled,   setLastBilled]   = useState(null);  // { table } — recently sent, for the undo toast
+  const [recallTarget, setRecallTarget] = useState(null);  // table currently being recalled (drives PIN modal)
+  const [recallPin,    setRecallPin]    = useState("");
+  const [recallErr,    setRecallErr]    = useState("");
+  const [recallBusy,   setRecallBusy]   = useState(false);
+  const undoTimer = useRef(null);
+
+  // Awaiting Payment tab
+  const [awaitSearch, setAwaitSearch] = useState("");
+  const [paidFlash,   setPaidFlash]   = useState([]);   // [{ table, ts }] transient PAID ✓ rows
+  const [paidTables,  setPaidTables]  = useState({});   // { table: true } — a bill was paid this session (blocks recall)
+
+  const parseItems = (raw) => Array.isArray(raw) ? raw
+    : (()=>{try{return JSON.parse(raw||"[]")}catch{return []}})();
+
+  const personSort = (a,b) => {
+    const na = parseInt(String(a.person).replace(/\D/g,""),10);
+    const nb = parseInt(String(b.person).replace(/\D/g,""),10);
+    if (isNaN(na)||isNaN(nb)) return String(a.person).localeCompare(String(b.person));
+    return na - nb;
+  };
+
+  // Aggregate a table's READY (bumped) holds → persons with items, subtotal, and
+  // the set of hold ids their items came from (so a bill can be recalled exactly).
+  const tablePersonsData = (tbl) => {
+    const holds = holdList.filter(h => h.status==="bumped" && (h.table||"TAKEAWAY")===tbl);
+    const pMap = {}, pHolds = {}, order = [];
+    holds.forEach(h => parseItems(h.items).forEach(i => {
+      const m = (i.note||"").match(/^\[([^\]]+)\]/);
+      const s = m ? m[1] : "P1";
+      if (!pMap[s]) { pMap[s] = []; pHolds[s] = new Set(); order.push(s); }
+      pMap[s].push(i);
+      pHolds[s].add(h.id);
+    }));
+    return order.map(s => ({
+      person: s,
+      items:  pMap[s],
+      holdIds: [...pHolds[s]],
+      subtotal: pMap[s].reduce((a,i)=>a + i.price*i.qty, 0),
+    })).sort(personSort);
+  };
+
+  const mkBill = (persons) => {
+    const items   = persons.flatMap(p => p.items);
+    const holdIds = [...new Set(persons.flatMap(p => p.holdIds || []))];
+    const sub     = items.reduce((a,i)=>a + i.price*i.qty, 0);
+    return {
+      id:        "B" + Date.now() + Math.random().toString(36).slice(2,6),
+      personIds: persons.map(p => p.person),
+      items, holdIds, subtotal: sub, total: sub*(1+TAX+SVC),
+    };
+  };
+
+  const openBill = (tbl) => {
+    const persons = tablePersonsData(tbl);
+    setBillTarget({ table: tbl, persons });
+    setComposedBills([]);          // SPLIT default — everyone starts unassigned
+    setCustomSel([]); setBillErr("");
+  };
+
+  const closeBill = () => {
+    setBillTarget(null); setComposedBills([]); setCustomSel([]);
+    setBillBusy(false); setBillErr("");
+  };
+
+  const assignedIds = composedBills.flatMap(b => b.personIds);
+  const unassigned  = billTarget ? billTarget.persons.filter(p => !assignedIds.includes(p.person)) : [];
+
+  // Primary: group the ticked (still-unassigned) persons into one bill
+  const addCustomBill = () => {
+    const chosen = unassigned.filter(p => customSel.includes(p.person));
+    if (!chosen.length) return;
+    setComposedBills(b => [...b, mkBill(chosen)]);
+    setCustomSel([]);
+  };
+  const removeBill = (id) => setComposedBills(b => b.filter(x => x.id !== id));
+
+  // Secondary shortcuts
+  const billWholeTable     = () => { setComposedBills([ mkBill(billTarget.persons) ]); setCustomSel([]); };
+  const billEachSeparately = () => { setComposedBills(billTarget.persons.map(p => mkBill([p]))); setCustomSel([]); };
+
+  const finishBilling = async () => {
+    if (!billTarget || billBusy || composedBills.length===0) return;
+    setBillBusy(true); setBillErr("");
+    const tbl = billTarget.table;
+    const billedPersons = new Set(composedBills.flatMap(b => b.personIds));
+    const billedHoldIds = new Set(composedBills.flatMap(b => b.holdIds || []));
+    const invoiceIds = [];
+    try {
+      const { posApi } = await import("../api/index.js");
+      for (const bill of composedBills) {
+        const inv = await posApi.createInvoice({
+          table_no: tbl==="TAKEAWAY" ? null : tbl,
+          items:    bill.items,
+          total:    bill.total,
+          notes:    bill.personIds.join("+") + " — Table " + tbl,
+          source_hold_ids: bill.holdIds,
+        });
+        if (inv?.id) {
+          invoiceIds.push(inv.id);
+          try { await posApi.printHold(String(inv.id)); }
+          catch (e) { console.error("Prebill print failed:", e?.message); }
+          setOpenInvoices(p => p.find(x => String(x.id) === String(inv.id))
+            ? p
+            : [{
+                id: inv.id, table: tbl, waiter: user.name,
+                items: bill.items, total: bill.total, holdIds: bill.holdIds,
+                status: "open", createdAt: new Date().toISOString(),
+              }, ...p]);
+        }
+      }
+      // Mark billed ONLY the specific holds that went onto these bills.
+      const holds = holdList.filter(h => h.status==="bumped" && (h.table||"TAKEAWAY")===tbl && billedHoldIds.has(h.id));
+      for (const h of holds) {
+        try { await posApi.updateHold(String(h.id), { status:"billed" }); } catch (_) {}
+      }
+      const markIds = new Set(holds.map(h => h.id));
+      setHoldList(prev => prev.map(h => markIds.has(h.id) ? {...h, status:"billed"} : h));
+      // Arm the undo window (recall needs a manager PIN)
+      setPaidTables(p => { const n = {...p}; delete n[tbl]; return n; });  // fresh round clears any stale paid flag
+      setLastBilled({ table: tbl });
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+      undoTimer.current = setTimeout(() => setLastBilled(null), 15000);
+      closeBill();
+    } catch (e) {
+      console.error("Billing failed:", e?.message);
+      setBillErr("Couldn't send bills — try again");
+      setBillBusy(false);
+    }
+  };
+
+  // Recall a single billed-but-unpaid BILL: void that invoice, and return to Ready
+  // ONLY the specific kitchen orders that made up this bill — not every round the
+  // person has been billed for. A bill shown here is unpaid, so it's always safe.
+  const doRecall = async () => {
+    if (!recallTarget || recallBusy) return;
+    const inv = recallTarget;
+    const tbl = inv.table || inv.table_no;
+    setRecallErr(""); setRecallBusy(true);
+    try {
+      const { authApi, posApi } = await import("../api/index.js");
+      await authApi.authorize(recallPin, "recall_bill");   // throws on bad PIN
+      // The exact orders this bill came from: live (holdIds) or from hold_ref after reload.
+      const billHoldIds = (inv.holdIds && inv.holdIds.length)
+        ? inv.holdIds.map(String)
+        : String(inv.holdId || inv.hold_ref || "").split(",").map(s => s.trim()).filter(Boolean);
+      // Void the invoice
+      try { await posApi.deleteHold(String(inv.id)); } catch (_) {}
+      setOpenInvoices(p => p.filter(i => String(i.id) !== String(inv.id)));
+      // Reopen ONLY this bill's holds
+      const toReopen = holdList.filter(h =>
+        h.status==="billed" && (h.table||"TAKEAWAY")===tbl && billHoldIds.includes(String(h.id)));
+      for (const h of toReopen) {
+        try { await posApi.updateHold(String(h.id), { status:"bumped" }); } catch (_) {}
+      }
+      const ids = new Set(toReopen.map(h => h.id));
+      setHoldList(prev => prev.map(h => ids.has(h.id) ? {...h, status:"bumped"} : h));
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+      setLastBilled(null);
+      setRecallTarget(null); setRecallPin(""); setRecallBusy(false);
+    } catch (e) {
+      setRecallErr("Invalid manager PIN");
+      setRecallBusy(false);
+    }
+  };
+
+  // Awaiting Payment — open (unpaid) invoices grouped by table
+  const awaitingByTable = (() => {
+    const m = {}, order = [];
+    (openInvoices||[]).forEach(inv => {
+      const t = inv.table || inv.table_no || "TAKEAWAY";
+      if (!m[t]) { m[t] = { table: t, invoices: [], total: 0 }; order.push(t); }
+      m[t].invoices.push(inv);
+      const v = Number(inv.finalTotal ?? inv.total ?? 0);
+      m[t].total += Number.isFinite(v) ? v : 0;
+    });
+    return order.map(t => m[t]);
+  })();
 
   const addToCart  = item => setCart(p => { const ex = p.find(c => c.id===item.id); return ex ? p.map(c=>c.id===item.id?{...c,qty:c.qty+1}:c) : [...p,{...item,qty:1,note:""}]; });
   const updateQty  = (id,d) => setCart(p => p.map(c=>c.id===id?{...c,qty:Math.max(0,c.qty+d)}:c).filter(c=>c.qty>0));
@@ -338,41 +579,63 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
 
   // ── render ────────────────────────────────────────────────────────────────────
   return (
-    <div style={{flex:1,display:"flex",overflow:"hidden",background:T.bg,fontFamily:T.font,color:T.textPrimary}}>
+    <div style={{flex:1,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden",background:T.bg,fontFamily:T.font,color:T.textPrimary}}>
 
+      {!mobile && (<>
       {/* ── LEFT PANEL ── */}
-      <div style={{width:"clamp(120px,35vw,340px)",display:"flex",flexDirection:"column",background:T.surface,borderRight:"1px solid "+T.border}}>
+      <div style={{
+        width: mobile ? "42%" : "clamp(320px,32vw,460px)",
+        flexShrink: 0,
+        display:"flex",flexDirection:"column",background:T.surface,
+        borderRight:"1px solid "+T.border,
+      }}>
 
         {/* Header */}
         <div style={{padding:"10px 12px",borderBottom:"1px solid "+T.border}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <div style={{fontSize:13,fontWeight:800,color:T.amber}}>WAITER POS</div>
-            <div style={{fontSize:10,color:T.textMuted}}>{user.name} · {new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
           </div>
 
-          {/* Table grid */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-            {TABLES.map(t => {
+          {/* Table grid — numbered tables in an even 4-column grid */}
+          <div style={{display:"grid",gridTemplateColumns:mobile?"repeat(3,1fr)":"repeat(4,1fr)",gap:mobile?6:10}}>
+            {TABLES.filter(t=>t!=="TAKEAWAY").map(t => {
               const hasPending = holdList.some(h=>h.table===t&&h.status==="pending");
               const hasBumped  = holdList.some(h=>h.table===t&&h.status==="bumped");
               const isActive   = table===t;
               return (
                 <button key={t} onClick={()=>switchTable(t)} style={{
-                  padding:"4px 1px",borderRadius:5,cursor:"pointer",fontSize:9,fontWeight:700,
+                  padding:mobile?"11px 2px":"16px 4px",borderRadius:8,cursor:"pointer",
+                  fontSize:mobile?15:20,fontWeight:800,letterSpacing:"0.5px",whiteSpace:"nowrap",
                   border:"1px solid "+(isActive?T.amber:hasBumped?T.green:hasPending?T.amber+"55":T.border),
                   background:isActive?T.amber:hasBumped?T.green+"22":hasPending?T.amber+"15":T.card,
                   color:isActive?T.bg:hasBumped?T.green:hasPending?T.amber:T.textSecondary,
-                }}>{t==="WALK-IN"?"WALK":t}</button>
+                }}>{t}</button>
               );
             })}
           </div>
+          {/* TAKEAWAY — own full-width row */}
+          {(() => {
+            const t = "TAKEAWAY";
+            const hasPending = holdList.some(h=>h.table===t&&h.status==="pending");
+            const hasBumped  = holdList.some(h=>h.table===t&&h.status==="bumped");
+            const isActive   = table===t;
+            return (
+              <button onClick={()=>switchTable(t)} style={{
+                width:"100%",marginTop:10,padding:"16px 4px",borderRadius:8,cursor:"pointer",
+                fontSize:18,fontWeight:800,letterSpacing:"1px",whiteSpace:"nowrap",fontFamily:T.font,
+                border:"1px solid "+(isActive?T.amber:hasBumped?T.green:hasPending?T.amber+"55":T.border),
+                background:isActive?T.amber:hasBumped?T.green+"22":hasPending?T.amber+"15":T.card,
+                color:isActive?T.bg:hasBumped?T.green:hasPending?T.amber:T.textSecondary,
+              }}>TAKEAWAY</button>
+            );
+          })()}
         </div>
 
         {/* Persons panel */}
         <div style={{flexShrink:0,maxHeight:260,overflowY:"auto",padding:"8px 12px",borderBottom:"1px solid "+T.border}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div style={{fontSize:10,fontWeight:700,color:T.textSecondary,letterSpacing:0.5}}>
-              {table==="WALK-IN"?"WALK-IN":"TABLE "+table} — {tablePersons.length} PERSON{tablePersons.length!==1?"S":""}
+              {table==="TAKEAWAY"?"TAKEAWAY":"TABLE "+table} — {tablePersons.length} PERSON{tablePersons.length!==1?"S":""}
             </div>
             {tablePersons.length>0&&tablePersons.length<MAX_PAX&&(
               <button onClick={addPerson} style={{
@@ -486,7 +749,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
             <span style={{
               padding:"2px 8px",borderRadius:5,fontSize:11,fontWeight:700,
               border:"1px solid "+T.border,background:T.card,color:T.textSecondary,
-            }}>{table==="WALK-IN"?"WALK":table}</span>
+            }}>{table==="TAKEAWAY"?"TAKEAWAY":table}</span>
           </div>
           <div style={{display:"flex",gap:6}}>
             {editHold&&<button onClick={()=>setEditHold(null)} style={{fontSize:11,color:T.red,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Cancel</button>}
@@ -564,7 +827,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
       </div>
 
       {/* ── RIGHT: Menu / My Orders — full viewport, tab-switched ── */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg}}>
+      <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg}}>
 
         {/* Tab bar */}
         <div style={{
@@ -572,10 +835,11 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
           background:T.surface,borderBottom:"1px solid "+T.border,
           padding:"0 14px",flexShrink:0,
         }}>
-          {[["menu","Menu"],["myorders","My Orders"],["held","Held"]].map(([tab,label])=>{
+          {[["menu","Menu"],["myorders","Ready"],["awaiting","Awaiting Payment"],["held","Held"]].map(([tab,label])=>{
             const readyCount = holdList.filter(h=>h.status==="bumped").length;
             const heldCount  = heldOrders.length;
-            const badge = tab==="myorders"?readyCount:tab==="held"?heldCount:0;
+            const awaitCount = awaitingByTable.length;
+            const badge = tab==="myorders"?readyCount:tab==="held"?heldCount:tab==="awaiting"?awaitCount:0;
             return (
               <button key={tab} onClick={()=>setRightTab(tab)} style={{
                 padding:"11px 18px",border:"none",cursor:"pointer",
@@ -588,7 +852,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 {badge>0&&(
                   <span style={{
                     position:"absolute",top:6,right:2,
-                    background:tab==="held"?T.amber:T.green,color:"#fff",
+                    background:tab==="held"?T.amber:tab==="awaiting"?T.red:T.green,color:"#fff",
                     borderRadius:"50%",width:17,height:17,fontSize:9,fontWeight:800,
                     display:"flex",alignItems:"center",justifyContent:"center",
                   }}>{badge}</span>
@@ -616,7 +880,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
             </div>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:14}}>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:`repeat(auto-fill,minmax(${mobile?95:140}px,1fr))`,gap:mobile?8:12}}>
               {pageItems.map(item=>{
                 const q=inCart(item.id);
                 return (
@@ -641,78 +905,71 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
           </>
         )}
 
-        {/* ── MY ORDERS VIEW ── */}
-        {rightTab==="myorders"&&(
+        {/* ── READY VIEW (grouped by table) ── */}
+        {rightTab==="myorders"&&(()=>{
+          const readyHolds = holdList.filter(h=>h.status==="bumped");
+          // Group ready holds by table, preserving first-seen order
+          const byTable={}, tableOrder=[];
+          readyHolds.forEach(h=>{
+            const t=h.table||"TAKEAWAY";
+            if(!byTable[t]){byTable[t]=[];tableOrder.push(t);}
+            byTable[t].push(h);
+          });
+          return (
           <div style={{flex:1,overflowY:"auto",padding:16}}>
-            {holdList.filter(h=>h.status==="bumped").length===0?(
+            {readyHolds.length===0?(
               <div style={{textAlign:"center",padding:"80px 0",color:T.textMuted}}>
                 <div style={{fontSize:48,marginBottom:12}}>📋</div>
                 <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>No orders ready yet</div>
                 <div style={{fontSize:12}}>Orders appear here automatically when kitchen marks them done</div>
               </div>
             ):(
-              holdList.filter(h=>h.status==="bumped").map(h=>{
-                const hItems=(Array.isArray(h.items)?h.items:(()=>{try{return JSON.parse(h.items||"[]")}catch{return []}})());
-                const pMap={},pOrder=[];
-                hItems.forEach(i=>{
-                  const m=(i.note||"").match(/^\[([^\]]+)\]\s*/);
-                  const s=m?m[1]:"P1";
-                  if(!pMap[s]){pMap[s]=[];pOrder.push(s);}
-                  pMap[s].push({...i,cleanNote:i.note?i.note.replace(/^\[[^\]]+\]\s*/,"").trim():""});
-                });
+              tableOrder.map(t=>{
+                const persons=tablePersonsData(t);
+                const tableTotal=persons.reduce((a,p)=>a+p.subtotal,0)*(1+TAX+SVC);
+                const repHold=byTable[t][0];
                 return (
-                  <div key={h.id} style={{
+                  <div key={t} style={{
                     background:T.card,border:"1px solid "+T.green,
                     borderTop:"3px solid "+T.green,
                     borderRadius:10,marginBottom:16,overflow:"hidden",
                   }}>
-                    {/* Header */}
-                    <div style={{background:T.green+"18",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    {/* Header — table + Bill action */}
+                    <div style={{background:T.green+"18",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                       <div>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
-                          <span style={{padding:"3px 10px",borderRadius:5,fontSize:13,fontWeight:800,background:T.green,color:"#fff"}}>
-                            {h.table||"Walk-in"}
-                          </span>
+                          <span style={{padding:"4px 12px",borderRadius:6,fontSize:15,fontWeight:900,letterSpacing:"0.5px",background:"#ea580c",color:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.25)"}}>{t}</span>
                           <span style={{fontSize:12,fontWeight:700,color:T.green}}>✓ Ready</span>
+                          <span style={{fontSize:11,color:T.textMuted}}>· {persons.length} person{persons.length!==1?"s":""}</span>
                         </div>
-                        <div style={{fontSize:10,color:T.textMuted}}>{h.waiter||user.name} · {h.createdDate}</div>
+                        <div style={{fontSize:10,color:T.textMuted}}>{repHold.waiter||user.name} · {repHold.createdDate}</div>
                       </div>
-                      <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                        {pOrder.map(s=>(
-                          <span key={s} style={{padding:"2px 8px",borderRadius:20,fontSize:10,fontWeight:700,border:"1px solid "+T.green+"55",background:T.green+"18",color:T.green}}>{s}</span>
-                        ))}
-                      </div>
+                      <button onClick={()=>openBill(t)} style={{
+                        padding:"8px 16px",borderRadius:6,border:"none",
+                        background:"linear-gradient(135deg,"+T.green+",#047857)",
+                        color:"#fff",fontWeight:700,fontSize:13,fontFamily:T.font,cursor:"pointer",
+                      }}>🧾 Bill · {fmt(tableTotal)}</button>
                     </div>
                     {/* Per-person sections */}
-                    {pOrder.map((s,si)=>{
-                      const pItems=pMap[s];
-                      const pSub=pItems.reduce((sum,i)=>sum+i.price*i.qty,0);
+                    {persons.map(({person:s,items:pItems,subtotal:pSub})=>{
                       const pGrand=pSub*(1+TAX+SVC);
                       return (
                         <div key={s} style={{borderTop:"1px solid "+T.border,padding:"10px 16px"}}>
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                            <span style={{padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:700,border:"1px solid "+T.green+"55",background:T.green+"15",color:T.green}}>{s}</span>
-                            <div style={{display:"flex",gap:6}}>
-                              {/* Add More — opens modal with existing order + mini menu */}
-                              <button onClick={()=>setAddMoreTarget({hold:h, person:s, existing:pItems, extraCart:[]})} style={{
-                                padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:700,
-                                border:"1px solid "+T.amber,background:T.amber+"18",color:T.amber,
-                                fontFamily:T.font,
-                              }}>➕ Add More</button>
-                              {/* Receipt — generate and send to cashier */}
-                              <button onClick={()=>handleBill({...h,_person:s,items:pItems,total:pGrand})} style={{
-                                padding:"6px 14px",borderRadius:6,border:"none",
-                                background:"linear-gradient(135deg,"+T.green+",#047857)",
-                                color:"#fff",fontWeight:700,fontSize:12,fontFamily:T.font,cursor:"pointer",
-                              }}>🧾 Receipt</button>
-                            </div>
+                            <span style={{padding:"4px 14px",borderRadius:20,fontSize:13,fontWeight:900,letterSpacing:"0.5px",border:"none",background:"#2563eb",color:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.25)"}}>{s}</span>
+                            <button onClick={()=>setAddMoreTarget({hold:repHold, person:s, existing:pItems, extraCart:[]})} style={{
+                              padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:700,
+                              border:"1px solid "+T.amber,background:T.amber+"18",color:T.amber,fontFamily:T.font,
+                            }}>➕ Add More</button>
                           </div>
-                          {pItems.map((item,idx)=>(
+                          {pItems.map((item,idx)=>{
+                            const cleanNote=item.note?item.note.replace(/^\[[^\]]+\]\s*/,"").trim():"";
+                            return (
                             <div key={idx} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"3px 0",borderBottom:idx<pItems.length-1?"1px solid "+T.border+"33":"none"}}>
-                              <span style={{color:T.textSecondary}}>{item.qty}× {item.name}{item.cleanNote&&<span style={{color:T.amber,fontStyle:"italic"}}> · {item.cleanNote}</span>}</span>
+                              <span style={{color:T.textSecondary}}>{item.qty}× {item.name}{cleanNote&&<span style={{color:T.amber,fontStyle:"italic"}}> · {cleanNote}</span>}</span>
                               <span style={{fontWeight:600,color:T.textPrimary}}>{fmt(item.price*item.qty)}</span>
                             </div>
-                          ))}
+                          );})}
                           <div style={{display:"flex",justifyContent:"space-between",marginTop:6,paddingTop:4,borderTop:"1px solid "+T.border+"44"}}>
                             <span style={{fontSize:11,color:T.textMuted}}>Total (incl. tax & service)</span>
                             <span style={{fontSize:13,fontWeight:800,color:T.amber}}>{fmt(pGrand)}</span>
@@ -725,7 +982,88 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               })
             )}
           </div>
-        )}
+          );
+        })()}
+
+        {/* ── AWAITING PAYMENT VIEW ── */}
+        {rightTab==="awaiting"&&(()=>{
+          const q = awaitSearch.trim().toLowerCase();
+          const rows = awaitingByTable.filter(r => !q || String(r.table).toLowerCase().includes(q));
+          return (
+          <div style={{flex:1,overflowY:"auto",padding:14}}>
+            {/* Search */}
+            <input
+              value={awaitSearch}
+              onChange={e=>setAwaitSearch(e.target.value)}
+              placeholder="Search table…"
+              style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,
+                border:"1px solid "+T.border,background:T.card,color:T.textPrimary,
+                fontSize:13,fontFamily:T.font,marginBottom:12}}
+            />
+
+            {/* Transient PAID ✓ confirmations */}
+            {paidFlash.map(f=>(
+              <div key={f.ts} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                background:T.green+"22",border:"1px solid "+T.green,borderRadius:8,padding:"10px 14px",marginBottom:8}}>
+                <span style={{fontSize:13,fontWeight:800,color:T.green}}>✓ PAID · {f.table}</span>
+                <span style={{fontSize:11,color:T.green}}>settled</span>
+              </div>
+            ))}
+
+            {rows.length===0?(
+              <div style={{textAlign:"center",padding:"70px 0",color:T.textMuted}}>
+                <div style={{fontSize:44,marginBottom:12}}>💳</div>
+                <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>
+                  {awaitSearch?"No matching table":"Nothing awaiting payment"}
+                </div>
+                <div style={{fontSize:12}}>Tables you've billed show here until the cashier settles them</div>
+              </div>
+            ):(
+              rows.map(r=>{
+                const partlyPaid = !!paidTables[r.table];
+                return (
+                  <div key={r.table} style={{
+                    background:T.card,border:"1px solid "+T.red,borderTop:"3px solid "+T.red,
+                    borderRadius:10,marginBottom:12,overflow:"hidden",
+                  }}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"10px 14px",flexWrap:"wrap"}}>
+                      <div>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                          <span style={{padding:"3px 10px",borderRadius:5,fontSize:13,fontWeight:800,background:T.red,color:"#fff"}}>{r.table}</span>
+                          <span style={{fontSize:12,fontWeight:700,color:T.red}}>Awaiting payment</span>
+                        </div>
+                        <div style={{fontSize:11,color:T.textMuted}}>
+                          {r.invoices.length} bill{r.invoices.length!==1?"s":""} · {fmt(r.total)}
+                          {partlyPaid&&<span style={{color:T.amber}}> · some paid</span>}
+                        </div>
+                      </div>
+                    </div>
+                    {/* Per-bill breakdown — each bill recallable on its own */}
+                    {r.invoices.map((inv,i)=>{
+                      const ppl = [...new Set((inv.items||[])
+                        .map(it => (it.note||"").match(/^\[([^\]]+)\]/)?.[1])
+                        .filter(Boolean))];
+                      const label = ppl.length ? ppl.join(", ") : `Bill ${i+1}`;
+                      return (
+                      <div key={inv.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:12,color:T.textSecondary,padding:"8px 14px",borderTop:"1px solid "+T.border+"44"}}>
+                        <span style={{fontWeight:600,color:T.textPrimary}}>{label}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:12}}>
+                          <span style={{fontWeight:700}}>{fmt(Number(inv.finalTotal ?? inv.total ?? 0) || 0)}</span>
+                          <button onClick={()=>{setRecallPin("");setRecallErr("");setRecallTarget(inv);}} style={{
+                            padding:"5px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,
+                            border:"1px solid "+T.amber,background:T.amber+"18",color:T.amber,
+                          }}>↩ Recall</button>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          );
+        })()}
 
         {/* ── HELD ORDERS VIEW ── */}
         {rightTab==="held"&&(
@@ -811,6 +1149,453 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
         )}
 
       </div>
+      </>)}
+
+      {/* ══════════════════ MOBILE UI ══════════════════ */}
+      {mobile && (() => {
+        const C = { green:"#047857", green2:"#059669", red:"#dc2626", blue:"#2563eb", amber:"#d97706" };
+        const tableTotal = (t) => holdList.filter(h=>h.status==="bumped"&&(h.table||"TAKEAWAY")===t)
+          .reduce((s,h)=>s+(Number(h.total)||0),0);
+        const cartSub = cart.reduce((s,i)=>s+i.price*i.qty,0);
+        const cartCnt = cart.reduce((s,i)=>s+i.qty,0);
+
+        // group bumped holds by table for Ready
+        const readyTables = (() => {
+          const m={}, ord=[];
+          holdList.filter(h=>h.status==="bumped").forEach(h=>{
+            const t=h.table||"TAKEAWAY"; if(!m[t]){m[t]=true;ord.push(t);}
+          });
+          return ord;
+        })();
+
+        const tabBar = (
+          <div style={{flexShrink:0,background:T.surface,borderTop:"1px solid "+T.border,display:"flex",padding:"6px 0 8px"}}>
+            {[["tables","🍽️","Order"],["ready","✅","Ready"],["held","⏸️","Held"],["bills","🧾","Bills"]].map(([id,ic,lb])=>{
+              const on = id==="tables" ? ["tables","order","cart"].includes(mScreen) : mScreen===id;
+              const badge = id==="ready" ? readyTables.length : id==="bills" ? awaitingByTable.length : id==="held" ? heldOrders.length : 0;
+              return (
+                <button key={id} onClick={()=>setMScreen(id==="tables"?"tables":id)} style={{
+                  flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2,background:"none",border:"none",
+                  cursor:"pointer",color:on?C.green:T.textMuted,fontWeight:700,fontSize:10,fontFamily:T.font,position:"relative",
+                }}>
+                  <span style={{fontSize:19}}>{ic}</span>{lb}
+                  {badge>0&&<span style={{position:"absolute",top:-3,right:"50%",marginRight:-22,background:C.red,color:"#fff",fontSize:8,fontWeight:800,borderRadius:8,padding:"1px 5px"}}>{badge}</span>}
+                </button>
+              );
+            })}
+          </div>
+        );
+
+        return (
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg,position:"relative"}}>
+            <div style={{flex:1,overflowY:"auto"}}>
+
+              {/* ── TABLES ── */}
+              {mScreen==="tables" && (
+                <div style={{padding:16}}>
+                  <div style={{fontSize:18,fontWeight:800,marginBottom:2,color:T.textPrimary}}>Select a table</div>
+                  <div style={{fontSize:12,color:T.textMuted,marginBottom:16}}>Tap a table to start or continue an order</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+                    {TABLES.filter(t=>t!=="TAKEAWAY").map(t=>{
+                      const busy = holdList.some(h=>h.table===t&&(h.status==="bumped"||h.status==="pending"));
+                      const active = table===t;
+                      return (
+                        <button key={t} onClick={()=>{switchTable(t);setMScreen("order");}} style={{
+                          background:active?C.amber:busy?"#ecfdf5":T.surface,
+                          border:"1.5px solid "+(active?C.amber:busy?C.green:T.border),borderRadius:14,
+                          padding:"20px 4px",fontSize:22,fontWeight:800,letterSpacing:"0.5px",fontFamily:T.font,
+                          color:active?"#fff":busy?C.green:T.textPrimary,cursor:"pointer",
+                        }}>{t}{busy&&<div style={{fontSize:9,marginTop:3}}>●</div>}</button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={()=>{switchTable("TAKEAWAY");setMScreen("order");}} style={{
+                    marginTop:12,width:"100%",background:T.surface,border:"1.5px dashed "+C.amber,borderRadius:14,
+                    padding:18,fontSize:16,fontWeight:800,letterSpacing:"1px",color:C.amber,cursor:"pointer",fontFamily:T.font,
+                  }}>TAKEAWAY</button>
+                </div>
+              )}
+
+              {/* ── ORDER (person tabs + menu list) ── */}
+              {mScreen==="order" && (
+                <div>
+                  <div style={{position:"sticky",top:0,zIndex:5,background:T.surface,borderBottom:"1px solid "+T.border,padding:"10px 12px",display:"flex",alignItems:"center",gap:8}}>
+                    <button onClick={()=>setMScreen("tables")} style={{width:38,height:38,borderRadius:10,border:"1px solid "+T.border,background:T.surface,fontSize:20,cursor:"pointer",flexShrink:0,color:T.textPrimary}}>‹</button>
+                    <span style={{background:table==="TAKEAWAY"?C.amber:C.red,color:"#fff",fontWeight:800,fontSize:15,padding:"5px 12px",borderRadius:8,flexShrink:0}}>{table}</span>
+                    <div style={{display:"flex",gap:6,overflowX:"auto",flex:1}}>
+                      {(tablePersons.length?tablePersons:[person]).map(p=>(
+                        <button key={p} onClick={()=>setPerson(p)} style={{
+                          flexShrink:0,padding:"7px 14px",borderRadius:20,fontWeight:800,fontSize:13,border:"none",cursor:"pointer",
+                          background:p===person?C.blue:"#eef0f3",color:p===person?"#fff":"#5a6170",fontFamily:T.font,
+                        }}>{p}</button>
+                      ))}
+                    </div>
+                    <button onClick={addPerson} style={{flexShrink:0,width:34,height:34,borderRadius:"50%",border:"1px dashed "+C.blue,background:T.surface,color:C.blue,fontSize:18,fontWeight:700,cursor:"pointer"}}>+</button>
+                  </div>
+                  <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Search menu…" style={{
+                    margin:"12px 16px 4px",width:"calc(100% - 32px)",padding:"11px 14px",borderRadius:22,border:"1px solid "+T.border,
+                    fontSize:14,background:T.surface,color:T.textPrimary,boxSizing:"border-box",fontFamily:T.font,outline:"none",
+                  }}/>
+                  <div style={{display:"flex",gap:8,overflowX:"auto",padding:"6px 16px 10px"}}>
+                    {cats.map(c=>(
+                      <button key={c.id} onClick={()=>{setCategory(c.id);setPage(0);}} style={{
+                        flexShrink:0,fontSize:13,fontWeight:700,color:category===c.id?T.textPrimary:T.textMuted,
+                        background:"none",border:"none",borderBottom:"2px solid "+(category===c.id?C.amber:"transparent"),
+                        padding:"5px 2px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:T.font,
+                      }}>{c.label||c.name||c.id}</button>
+                    ))}
+                  </div>
+                  <div style={{padding:"0 12px 120px"}}>
+                    {filtered.map(item=>{
+                      const q = cart.find(c=>c.id===item.id)?.qty||0;
+                      return (
+                        <div key={item.id} style={{display:"flex",alignItems:"center",gap:12,background:T.surface,border:"1px solid "+T.border,borderRadius:14,padding:"12px 14px",marginBottom:9}}>
+                          <div style={{width:40,height:40,borderRadius:10,background:T.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{item.emoji||"🍽"}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:14,fontWeight:700,color:T.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
+                            <div style={{fontSize:13,color:C.amber,fontWeight:800}}>KES {fmt(item.price)}</div>
+                          </div>
+                          {q>0&&<span style={{minWidth:22,textAlign:"center",fontWeight:800,color:C.green,fontSize:15}}>{q}</span>}
+                          <button onClick={()=>addToCart(item)} style={{width:38,height:38,borderRadius:11,border:"none",background:C.green,color:"#fff",fontSize:22,fontWeight:700,cursor:"pointer",flexShrink:0}}>+</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ── CART / REVIEW ── */}
+              {mScreen==="cart" && (
+                <div>
+                  <div style={{position:"sticky",top:0,zIndex:5,background:T.surface,borderBottom:"1px solid "+T.border,padding:"10px 12px",display:"flex",alignItems:"center",gap:10}}>
+                    <button onClick={()=>setMScreen("order")} style={{width:38,height:38,borderRadius:10,border:"1px solid "+T.border,background:T.surface,fontSize:20,cursor:"pointer",color:T.textPrimary}}>‹</button>
+                    <span style={{background:C.red,color:"#fff",fontWeight:800,fontSize:15,padding:"5px 12px",borderRadius:8}}>{table}</span>
+                    <b style={{fontSize:15,color:T.textPrimary}}>Review · {person}</b>
+                  </div>
+                  <div style={{padding:16}}>
+                    {cart.length===0 ? (
+                      <div style={{textAlign:"center",color:T.textMuted,padding:"50px 0"}}>No items yet.<br/>Tap menu items to add them.</div>
+                    ) : (<>
+                      {cart.map(item=>(
+                        <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,background:T.surface,border:"1px solid "+T.border,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+                          <div style={{flex:1,fontSize:14,fontWeight:600,color:T.textPrimary}}>{item.name}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <button onClick={()=>updateQty(item.id,-1)} style={{width:30,height:30,borderRadius:8,border:"1px solid "+T.border,background:T.surface,fontSize:16,fontWeight:700,cursor:"pointer",color:T.textPrimary}}>−</button>
+                            <b style={{minWidth:18,textAlign:"center",color:T.textPrimary}}>{item.qty}</b>
+                            <button onClick={()=>updateQty(item.id,1)} style={{width:30,height:30,borderRadius:8,border:"1px solid "+T.border,background:T.surface,fontSize:16,fontWeight:700,cursor:"pointer",color:T.textPrimary}}>+</button>
+                          </div>
+                          <div style={{fontSize:13,fontWeight:800,minWidth:62,textAlign:"right",color:T.textPrimary}}>KES {fmt(item.price*item.qty)}</div>
+                        </div>
+                      ))}
+                      <div style={{background:T.surface,border:"1px solid "+T.border,borderRadius:14,padding:14,margin:"14px 0"}}>
+                        {[["Subtotal",cartSub],["Tax 16%",cartSub*TAX],["Service 2%",cartSub*SVC]].map(([l,v])=>(
+                          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:13,color:T.textMuted,marginBottom:6}}><span>{l}</span><span>KES {fmt(v)}</span></div>
+                        ))}
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:17,fontWeight:800,color:T.textPrimary,marginTop:8,paddingTop:10,borderTop:"1px solid "+T.border}}><span>Total</span><span>KES {fmt(cartSub*(1+TAX+SVC))}</span></div>
+                      </div>
+                      <div style={{display:"flex",gap:10}}>
+                        <button onClick={handleHoldOrder} style={{flex:1,padding:14,borderRadius:13,border:"1.5px solid "+T.border,background:T.surface,fontWeight:800,fontSize:14,cursor:"pointer",color:T.textPrimary,fontFamily:T.font}}>Hold</button>
+                        <button onClick={()=>{handleSendKitchen();setMScreen("order");}} style={{flex:2,padding:14,borderRadius:13,border:"none",background:"linear-gradient(135deg,"+C.green2+","+C.green+")",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:T.font}}>Send to Kitchen ›</button>
+                      </div>
+                    </>)}
+                  </div>
+                </div>
+              )}
+
+              {/* ── READY ── */}
+              {mScreen==="ready" && (
+                <div style={{padding:14}}>
+                  <div style={{fontSize:18,fontWeight:800,marginBottom:12,color:T.textPrimary}}>Ready to bill</div>
+                  {readyTables.length===0 && <div style={{textAlign:"center",color:T.textMuted,padding:"50px 0"}}>No ready orders</div>}
+                  {readyTables.map(t=>{
+                    const tt = tableTotal(t);
+                    const ppl = tablePersonsData(t);
+                    const repHold = holdList.find(h=>h.status==="bumped"&&(h.table||"TAKEAWAY")===t);
+                    return (
+                      <div key={t} style={{background:T.surface,border:"1px solid "+C.green,borderRadius:12,marginBottom:14,overflow:"hidden"}}>
+                        <div style={{background:C.green+"18",padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{background:C.green,color:"#fff",fontWeight:800,fontSize:16,padding:"4px 12px",borderRadius:7}}>{t}</span>
+                          <button onClick={()=>openBill(t)} style={{padding:"9px 16px",borderRadius:8,border:"none",background:"linear-gradient(135deg,"+C.green2+","+C.green+")",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:T.font}}>🧾 Bill · {fmt(tt)}</button>
+                        </div>
+                        {ppl.map(p=>(
+                          <div key={p.person} style={{padding:"10px 14px",borderTop:"1px solid "+T.border}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                              <span style={{background:C.blue,color:"#fff",fontWeight:800,fontSize:12,padding:"3px 12px",borderRadius:20}}>{p.person}</span>
+                              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                                <span style={{fontSize:12,color:T.textMuted}}>KES {fmt(p.subtotal*(1+TAX+SVC))}</span>
+                                <button onClick={()=>repHold&&setAddMoreTarget({hold:repHold,person:p.person,existing:p.items,extraCart:[]})} style={{padding:"6px 11px",borderRadius:6,border:"1px solid "+C.amber,background:C.amber+"18",color:C.amber,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:T.font}}>➕ Add More</button>
+                              </div>
+                            </div>
+                            {p.items.map((it,k)=>(
+                              <div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:T.textSecondary,padding:"1px 0"}}>
+                                <span>{it.qty}× {it.name}</span><span>{fmt(it.price*it.qty)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── HELD ── */}
+              {mScreen==="held" && (
+                <div style={{padding:14}}>
+                  <div style={{fontSize:18,fontWeight:800,marginBottom:12,color:T.textPrimary}}>Held orders</div>
+                  {heldOrders.length===0 && <div style={{textAlign:"center",color:T.textMuted,padding:"50px 0"}}>No held orders<br/><span style={{fontSize:12}}>Tap "Hold order" while taking an order to park it here</span></div>}
+                  {heldOrders.map(h=>{
+                    const hItems = parseItems(h.items);
+                    const hTotal = Number(h.total)||hItems.reduce((s,i)=>s+i.price*i.qty,0);
+                    const hPerson = h._person || (hItems[0]?.note||"").match(/^\[([^\]]+)\]/)?.[1] || "P1";
+                    return (
+                      <div key={h.id} style={{background:T.surface,border:"1px solid "+C.amber,borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+                        <div style={{padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{background:C.amber,color:"#fff",fontWeight:800,fontSize:13,padding:"3px 11px",borderRadius:20}}>{hPerson}</span>
+                            <span style={{fontSize:12,color:T.textMuted}}>{h.table||table} · {hItems.length} item{hItems.length!==1?"s":""} · KES {fmt(hTotal)}</span>
+                          </div>
+                        </div>
+                        <div style={{padding:"0 14px 10px",fontSize:12,color:T.textSecondary}}>
+                          {hItems.map((it,k)=><span key={k}>{it.qty}× {it.name}{k<hItems.length-1?", ":""}</span>)}
+                        </div>
+                        <div style={{display:"flex",gap:8,padding:"10px 14px",borderTop:"1px solid "+T.border}}>
+                          <button onClick={async()=>{
+                            setHeldOrders(p=>p.filter(x=>x.id!==h.id));
+                            try {
+                              const {posApi} = await import("../api/index.js");
+                              const saved = await posApi.createHold({ table_no:h.table||table, items:hItems, total:hTotal });
+                              setHoldList(p=>[{...h,id:saved.id,status:"pending"},...p]);
+                            } catch(e){ console.error(e); }
+                            setModal("kitchen_sent"); setTimeout(()=>setModal(null),1500);
+                          }} style={{flex:2,padding:"11px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.green2+","+C.green+")",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Send to Kitchen ›</button>
+                          <button onClick={()=>setHeldOrders(p=>p.filter(x=>x.id!==h.id))} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+C.red,background:C.red+"15",color:C.red,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Discard</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── BILLS (awaiting payment + recall) ── */}
+              {mScreen==="bills" && (
+                <div style={{padding:14}}>
+                  <div style={{fontSize:18,fontWeight:800,marginBottom:12,color:T.textPrimary}}>Awaiting payment</div>
+                  {awaitingByTable.length===0 && <div style={{textAlign:"center",color:T.textMuted,padding:"50px 0"}}>No bills awaiting payment</div>}
+                  {awaitingByTable.map(r=>(
+                    <div key={r.table} style={{background:T.surface,border:"1px solid "+C.red,borderRadius:12,marginBottom:14,overflow:"hidden"}}>
+                      <div style={{padding:"12px 14px"}}>
+                        <span style={{background:C.red,color:"#fff",fontWeight:800,fontSize:15,padding:"4px 12px",borderRadius:7}}>{r.table}</span>
+                        <span style={{marginLeft:8,fontSize:12,color:T.textMuted}}>{r.invoices.length} bill{r.invoices.length!==1?"s":""} · {fmt(r.total)}</span>
+                      </div>
+                      {r.invoices.map((inv,i)=>{
+                        const items = parseItems(inv.items);
+                        const ppl=[...new Set(items
+                          .map(it=>(it.note||"").match(/^\[([^\]]+)\]/)?.[1])
+                          .filter(p=>p&&p!=="null"&&p!=="undefined"))];
+                        const label = ppl.length?ppl.join(", "):`Bill ${i+1}`;
+                        return (
+                          <div key={inv.id||i} style={{padding:"10px 14px",borderTop:"1px solid "+T.border}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+                              <span style={{fontWeight:800,color:T.textPrimary,fontSize:13}}>{label}</span>
+                              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                                <span style={{fontWeight:800,color:T.textPrimary,fontSize:13}}>{fmt(Number(inv.finalTotal??inv.total??0)||0)}</span>
+                                <button onClick={()=>{setRecallPin("");setRecallErr("");setRecallTarget(inv);}} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.amber,background:C.amber+"18",color:C.amber,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:T.font}}>↩ Recall</button>
+                              </div>
+                            </div>
+                            {items.map((it,k)=>(
+                              <div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:T.textSecondary,padding:"1px 0"}}>
+                                <span>{it.qty}× {it.name}</span>
+                                <span>{fmt(it.price*it.qty)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+            </div>
+
+            {/* pinned cart summary + Hold at the bottom (order screen with items) */}
+            {mScreen==="order" && cartCnt>0 && (
+              <div style={{position:"absolute",left:12,right:12,bottom:62,display:"flex",flexDirection:"column",gap:8}}>
+                <button onClick={()=>setMScreen("cart")} style={{
+                  background:C.green,color:"#fff",borderRadius:16,
+                  padding:"13px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",
+                  border:"none",boxShadow:"0 8px 22px rgba(4,120,87,.4)",fontFamily:T.font,
+                }}>
+                  <span style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{background:"#fff",color:C.green,width:26,height:26,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:14}}>{cartCnt}</span>
+                    <b style={{fontSize:15}}>View {person}'s order</b>
+                  </span>
+                  <span style={{fontWeight:800,fontSize:14}}>KES {fmt(cartSub*(1+TAX+SVC))} ›</span>
+                </button>
+                <button onClick={handleHoldOrder} style={{
+                  width:"100%",background:T.surface,color:T.textPrimary,borderRadius:16,padding:"13px 18px",
+                  border:"1.5px solid "+T.border,fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:T.font,
+                  boxShadow:"0 4px 14px rgba(0,0,0,.10)",
+                }}>Hold order</button>
+              </div>
+            )}
+
+            {tabBar}
+          </div>
+        );
+      })()}
+
+      {/* ── Build Bill Modal (split-default) ── */}
+      {billTarget&&(
+        <div style={overlay}>
+          <div style={{background:T.surface,border:"1px solid "+T.border,borderRadius:14,padding:22,width:420,maxWidth:"92vw",maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <div style={{fontSize:16,fontWeight:800,color:T.textPrimary}}>Bill {billTarget.table}</div>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:12,color:T.textMuted}}>{billTarget.persons.length} person{billTarget.persons.length!==1?"s":""}</span>
+                <button onClick={closeBill} aria-label="Close" style={{
+                  border:"none",background:"none",color:T.textMuted,cursor:"pointer",
+                  fontSize:22,lineHeight:1,padding:"0 2px",fontFamily:T.font,
+                }}>×</button>
+              </div>
+            </div>
+            <div style={{fontSize:11,color:T.textMuted,marginBottom:14}}>Tap people to group them, then add as a bill</div>
+
+            {/* Person picker (still-unassigned persons) */}
+            {unassigned.length>0?(
+              <div style={{marginBottom:12}}>
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                  {unassigned.map(p=>{
+                    const on=customSel.includes(p.person);
+                    return (
+                      <button key={p.person} onClick={()=>setCustomSel(s=>on?s.filter(x=>x!==p.person):[...s,p.person])} style={{
+                        display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"9px 12px",borderRadius:8,cursor:"pointer",fontFamily:T.font,
+                        border:"1px solid "+(on?T.amber:T.border),background:on?T.amber+"18":T.card,
+                      }}>
+                        <span style={{fontSize:12,fontWeight:700,color:on?T.amber:T.textPrimary}}>{on?"☑":"☐"} {p.person}</span>
+                        <span style={{fontSize:12,fontWeight:700,color:T.textSecondary}}>{fmt(p.subtotal*(1+TAX+SVC))}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={addCustomBill} disabled={!customSel.length} style={{
+                  width:"100%",padding:"9px",borderRadius:8,border:"1px dashed "+T.amber,
+                  background:"transparent",color:T.amber,fontWeight:700,fontSize:12,fontFamily:T.font,
+                  cursor:customSel.length?"pointer":"not-allowed",opacity:customSel.length?1:0.5,
+                }}>+ Add {customSel.length?customSel.length+" ":""}as a bill</button>
+
+                {/* Secondary shortcuts */}
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <button onClick={billWholeTable} style={{
+                    flex:1,padding:"7px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,
+                    border:"1px solid "+T.border,background:"transparent",color:T.textSecondary,
+                  }}>Whole table together</button>
+                  <button onClick={billEachSeparately} style={{
+                    flex:1,padding:"7px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,
+                    border:"1px solid "+T.border,background:"transparent",color:T.textSecondary,
+                  }}>Each pays own</button>
+                </div>
+              </div>
+            ):(
+              <div style={{fontSize:11,color:T.green,fontWeight:700,padding:"4px 0 12px"}}>✓ Everyone is on a bill</div>
+            )}
+
+            {/* Composed bills preview */}
+            <div style={{flex:1,overflowY:"auto",marginBottom:14,borderTop:"1px solid "+T.border,paddingTop:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.textSecondary,marginBottom:8}}>
+                {composedBills.length} bill{composedBills.length!==1?"s":""} to send
+              </div>
+              {composedBills.length===0&&(
+                <div style={{fontSize:11,color:T.textMuted,fontStyle:"italic"}}>No bills yet — group people above</div>
+              )}
+              {composedBills.map((b,i)=>(
+                <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:T.textPrimary}}>Bill {i+1} · {b.personIds.join(", ")}</div>
+                    <div style={{fontSize:10,color:T.textMuted}}>{b.items.reduce((a,it)=>a+it.qty,0)} item(s)</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:13,fontWeight:800,color:T.amber}}>{fmt(b.total)}</span>
+                    <button onClick={()=>removeBill(b.id)} style={{border:"none",background:"none",color:T.red,cursor:"pointer",fontSize:16,fontWeight:700}}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {billErr&&<div style={{fontSize:11,color:T.red,marginBottom:10}}>{billErr}</div>}
+            {composedBills.length>0&&unassigned.length>0&&(
+              <div style={{fontSize:11,color:T.textMuted,marginBottom:10}}>
+                {unassigned.map(p=>p.person).join(", ")} stay open in Ready
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={closeBill} style={{...actionBtn(T.card),flex:1}}>Close</button>
+              <button onClick={finishBilling}
+                disabled={billBusy||composedBills.length===0}
+                style={{
+                  ...actionBtn(T.green),flex:2,color:"#fff",border:"none",
+                  opacity:(billBusy||composedBills.length===0)?0.5:1,
+                  cursor:(billBusy||composedBills.length===0)?"not-allowed":"pointer",
+                }}>
+                {billBusy?"Sending…":composedBills.length===1?"Print & Send 1 bill":"Print & Send "+composedBills.length+" bills"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Undo toast (after a bill is sent) ── */}
+      {lastBilled&&!recallTarget&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:9000,
+          background:T.surface,border:"1px solid "+T.border,borderRadius:10,padding:"10px 14px",
+          display:"flex",alignItems:"center",gap:14,boxShadow:"0 6px 24px rgba(0,0,0,0.35)"}}>
+          <span style={{fontSize:13,color:T.textPrimary,fontWeight:600}}>✓ Bill sent · {lastBilled.table}</span>
+          <button onClick={()=>{setRightTab("awaiting");setLastBilled(null);}} style={{
+            padding:"6px 12px",borderRadius:6,border:"1px solid "+T.amber,background:T.amber+"18",
+            color:T.amber,fontWeight:700,fontSize:12,fontFamily:T.font,cursor:"pointer",
+          }}>↩ Recall</button>
+        </div>
+      )}
+
+      {/* ── Recall confirm (manager PIN) ── */}
+      {recallTarget&&(()=>{
+        const ppl = [...new Set((recallTarget.items||[])
+          .map(it => (it.note||"").match(/^\[([^\]]+)\]/)?.[1]).filter(Boolean))];
+        const who = ppl.length ? ppl.join(", ") : "bill";
+        const where = recallTarget.table || recallTarget.table_no || "";
+        return (
+        <div style={overlay}>
+          <div style={{background:T.surface,border:"1px solid "+T.border,borderRadius:14,padding:22,width:340,maxWidth:"92vw"}}>
+            <div style={{fontSize:16,fontWeight:800,color:T.textPrimary,marginBottom:4}}>Recall {who} · {where}</div>
+            <div style={{fontSize:11,color:T.textMuted,marginBottom:16}}>
+              This pulls just this bill back from the cashier and returns {who}'s order to Ready. Other bills on the table are untouched. Manager authorization required.
+            </div>
+            <input
+              type="password" inputMode="numeric" autoFocus value={recallPin}
+              maxLength={4}
+              onChange={e=>{setRecallPin(e.target.value.replace(/\D/g,"").slice(0,4));setRecallErr("");}}
+              onKeyDown={e=>{if(e.key==="Enter"&&recallPin)doRecall();}}
+              placeholder="Enter 4-digit manager PIN"
+              style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,
+                border:"1px solid "+(recallErr?T.red:T.border),background:T.card,
+                color:T.textPrimary,fontSize:14,letterSpacing:2,textAlign:"center",marginBottom:recallErr?6:16}}
+            />
+            {recallErr&&<div style={{fontSize:11,color:T.red,marginBottom:14}}>{recallErr}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setRecallTarget(null);setRecallPin("");setRecallErr("");}} style={{...actionBtn(T.card),flex:1}}>Keep it</button>
+              <button onClick={doRecall} disabled={!recallPin||recallBusy} style={{
+                ...actionBtn(T.amber),flex:1,color:T.bg,border:"none",
+                opacity:(!recallPin||recallBusy)?0.5:1,cursor:(!recallPin||recallBusy)?"not-allowed":"pointer",
+              }}>{recallBusy?"Checking…":"Authorize & Recall"}</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* ── Cancel Order Confirm Modal ── */}
       {cancelTarget&&(
@@ -831,15 +1616,54 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 {fmt(cancelTarget.total)}
               </div>
             </div>
+
+            {/* Manager override — required for waiters/cashiers */}
+            {needsOverride&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.textSecondary,marginBottom:6}}>
+                  Manager authorization required
+                </div>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoFocus
+                  value={overridePin}
+                  onChange={e=>{setOverridePin(e.target.value);setOverrideErr("");}}
+                  onKeyDown={e=>{if(e.key==="Enter"&&overridePin)authorizeAndCancel();}}
+                  placeholder="Enter manager PIN"
+                  style={{
+                    width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,
+                    border:"1px solid "+(overrideErr?T.red:T.border),background:T.card,
+                    color:T.textPrimary,fontSize:14,letterSpacing:2,textAlign:"center",
+                  }}
+                />
+                {overrideErr&&(
+                  <div style={{fontSize:11,color:T.red,marginTop:6}}>{overrideErr}</div>
+                )}
+              </div>
+            )}
+
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setCancelTarget(null)} style={{...actionBtn(T.card),flex:1}}>
+              <button onClick={closeCancel} style={{...actionBtn(T.card),flex:1}}>
                 Keep Order
               </button>
-              <button onClick={()=>cancelHold(cancelTarget.id)} style={{
-                ...actionBtn(T.red),flex:1,color:"#fff",border:"none",
-              }}>
-                Yes, Cancel
-              </button>
+              {needsOverride?(
+                <button onClick={authorizeAndCancel}
+                  disabled={!overridePin||overrideBusy}
+                  style={{
+                    ...actionBtn(T.red),flex:1,color:"#fff",border:"none",
+                    opacity:(!overridePin||overrideBusy)?0.5:1,
+                    cursor:(!overridePin||overrideBusy)?"not-allowed":"pointer",
+                  }}>
+                  {overrideBusy?"Checking…":"Authorize & Cancel"}
+                </button>
+              ):(
+                <button onClick={()=>cancelHold(cancelTarget.id)} style={{
+                  ...actionBtn(T.red),flex:1,color:"#fff",border:"none",
+                }}>
+                  Yes, Cancel
+                </button>
+              )}
             </div>
           </div>
         </div>

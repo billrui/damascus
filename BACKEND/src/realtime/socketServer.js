@@ -66,7 +66,7 @@ export function initSocketServer(httpServer) {
     if (role === 'admin' || role === 'manager') {
       socket.join('managers');
     }
-    if (role === 'cashier') {
+    if (role === 'cashier' || role === 'waiter') {
       socket.join('pos');
     }
     if (role === 'kitchen') {
@@ -131,6 +131,15 @@ export function emitInvoiceCreated(invoice) {
 export function emitInvoiceUpdated(invoice) {
   if (!io) return;
   io.to('pos').to('managers').emit('invoice:updated', invoice);
+}
+
+/** Invoice settled — drop from open lists, flash PAID on the waiter board */
+export function emitInvoicePaid(payload) {
+  if (!io) { console.log('⚠️  emitInvoicePaid: io is null'); return; }
+  const posSize = io.sockets.adapter.rooms.get('pos')?.size ?? 0;
+  const mgrSize = io.sockets.adapter.rooms.get('managers')?.size ?? 0;
+  console.log(`📡 emitInvoicePaid → pos(${posSize}) + managers(${mgrSize})`, payload);
+  io.to('pos').to('managers').emit('invoice:paid', payload);
 }
 
 /** Low-stock alert after FEFO deduction */

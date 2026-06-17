@@ -17,6 +17,8 @@ export const authApi = {
     api.post("/auth/logout",  {}).then(r => r.data),
   me:      ()                        =>
     api.get("/auth/me").then(r => r.data.user),
+  authorize: (pin, action)           =>
+    api.post("/auth/authorize", { pin, action }).then(r => r.data),
 };
 
 // -- Users ---------------------------------------------------------------------
@@ -95,6 +97,16 @@ export const posApi = {
   // Receipts
   receiptUrl:  (id)          => `${api.defaults.baseURL}/pos/receipts/${id}`,
   escposUrl:   (id)          => `${api.defaults.baseURL}/pos/receipts/${id}/escpos`,
+  // Fetch the receipt PDF through the authenticated client (carries the JWT),
+  // then open it as a local blob — avoids the 401 you get from a raw window.open
+  // to the backend, and never navigates the browser to the API port.
+  openReceipt: async (id) => {
+    const res = await api.get(`/pos/receipts/${id}`, { responseType: "blob" });
+    const url = URL.createObjectURL(res.data);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return true;
+  },
 
   // Hold orders
   holds:       (params = {}) => api.get("/pos/holds",           { params }).then(r => r.data.holds),

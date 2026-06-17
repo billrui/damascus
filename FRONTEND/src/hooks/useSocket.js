@@ -42,27 +42,42 @@ export function useSocket(handlers = {}) {
   handlersRef.current = handlers;
 
   useEffect(() => {
+    let wrappers   = null;
+    let retryTimer = null;
+
+    const detach = () => {
+      if (wrappers && _socket) {
+        Object.keys(wrappers).forEach(e => _socket.off(e, wrappers[e]));
+      }
+      wrappers = null;
+    };
+
     const attach = () => {
-      if (!_socket) return;
-      const wrappers = {};
+      if (!_socket) return false;
+      detach();                              // avoid duplicate listeners
+      wrappers = {};
       Object.keys(handlersRef.current).forEach(event => {
         wrappers[event] = (...args) => handlersRef.current[event]?.(...args);
         _socket.on(event, wrappers[event]);
       });
-      return wrappers;
+      // Re-bind our handlers on every (re)connect — same fn ref, so off+on dedupes
+      _socket.off("connect", attach);
+      _socket.on("connect", attach);
+      return true;
     };
 
-    let wrappers = attach();
-
-    const onReconnect = () => {
-      if (wrappers) Object.keys(wrappers).forEach(e => _socket?.off(e, wrappers[e]));
-      wrappers = attach();
+    // Attach now if the socket exists; otherwise keep retrying until it does.
+    // This is the key fix: components that mount before the socket connects
+    // used to never bind their handlers at all.
+    const ensure = () => {
+      if (!attach()) retryTimer = setTimeout(ensure, 300);
     };
-    _socket?.on("connect", onReconnect);
+    ensure();
 
     return () => {
-      if (wrappers) Object.keys(wrappers).forEach(e => _socket?.off(e, wrappers[e]));
-      _socket?.off("connect", onReconnect);
+      if (retryTimer) clearTimeout(retryTimer);
+      detach();
+      _socket?.off("connect", attach);
     };
   }, []);
 }

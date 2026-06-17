@@ -424,14 +424,15 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
       const { posApi } = await import("../api/index.js");
       const saved = await posApi.createSale({
         items,
-        customer:    selectedInv.table ? `Table ${selectedInv.table}` : "Walk-in",
-        table_no:    selectedInv.table || null,
+        customer:    (selectedInv.table_no || selectedInv.table) ? `Table ${selectedInv.table_no || selectedInv.table}` : "Walk-in",
+        table_no:    selectedInv.table_no || selectedInv.table || null,
         payment:     paymentMethod,
         payment_ref: paymentRef,
         tendered:    tenderedAmt,
         total,
         waiter_id:   selectedInv.waiter_id || null,
         shift_id:    activeShift?._dbId || activeShift?.id || null,
+        open_invoice_id: (selectedInv.id != null && !isNaN(Number(selectedInv.id))) ? Number(selectedInv.id) : null,
       });
 
       setSales(p => [...p, {
@@ -446,8 +447,8 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
       setOpenInvoices(p => p.filter(inv => inv.id !== selectedInv.id));
 
       if (saved.id) {
-        const receiptUrl = posApi.receiptUrl(saved.id);
-        window.open(receiptUrl, "_blank");
+        try { await posApi.openReceipt(saved.id); }
+        catch (e) { console.error("Receipt open failed:", e?.message); }
       }
 
       setProcessing(false);

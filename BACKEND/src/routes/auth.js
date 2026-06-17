@@ -10,7 +10,7 @@ import {
 } from '../services/authService.js';
 import { verifyJWT } from '../middleware/auth.js';
 import { validate, loginSchema } from '../middleware/validate.js';
-import { loginLimiter } from '../middleware/rateLimit.js';
+import { loginLimiter, authorizeLimiter } from '../middleware/rateLimit.js';
 
 const router = Router();
 
@@ -177,6 +177,59 @@ router.get('/me', verifyJWT, async (req, res, next) => {
     }
 
     res.json({ user: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/auth/authorize — supervisor override ───────────────────────────
+/**
+ * Body: { pin: string, action?: string }
+ *
+ * Verifies that the supplied PIN belongs to an active admin or manager.
+ * Used for floor overrides (e.g. a waiter cancelling a sent order) where a
+ * supervisor must physically authorize the action at the terminal.
+ *
+ * The requester must already be authenticated (verifyJWT). The endpoint never
+ * issues tokens or a session — it only confirms authorization and records who
+ * approved it.
+ *
+ * Returns:
+ *   200 { ok: true, authorizedBy: { id, name, role } }
+ *   401 { ok: false } on no match
+ */
+router.post('/authorize', verifyJWT, authorizeLimiter, async (req, res, next) => {
+  try {
+    const { pin, action } = req.body || {};
+    if (!pin || typeof pin !== 'string') {
+      return res.status(422).json({ ok: false, error: 'PIN required' });
+    }
+
+    // Only active supervisors can authorize
+    const { rows } = await db.query(
+      `SELECT id, name, role, pin_hash
+       FROM users
+       WHERE active = true AND role IN ('admin','manager')`
+    );
+
+    let approver = null;
+    for (const u of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await verifyPin(pin, u.pin_hash)) { approver = u; break; }
+    }
+
+    if (!approver) {
+      return res.status(401).json({ ok: false, message: 'Not authorized' });
+    }
+
+    await db.query(
+      `INSERT INTO audit_log (user_id, action, entity, entity_id, payload, ip_address)
+       VALUES ($1, 'OVERRIDE_AUTHORIZE', 'auth', $2, $3, $4)`,
+      [approver.id, String(action || 'override'),
+       JSON.stringify({ requestedBy: req.user.sub, action: action || null }), req.ip]
+    );
+
+    res.json({ ok: true, authorizedBy: { id: approver.id, name: approver.name, role: approver.role } });
   } catch (err) {
     next(err);
   }

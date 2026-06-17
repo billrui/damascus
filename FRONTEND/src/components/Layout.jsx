@@ -1,6 +1,16 @@
 import React from "react";
 import { T } from "../posTheme";
 
+// Live ticking clock for the header (updates every 30s)
+function HeaderClock() {
+  const [now, setNow] = React.useState(new Date());
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  return <>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</>;
+}
+
 // --- SVG Icons ----------------------------------------------------------------
 const Icon = React.memo(({ name, size = 18, color = "currentColor" }) => {
   const icons = {
@@ -292,7 +302,7 @@ export const Sidebar = React.memo(function Sidebar({ activeNav, setActiveNav, us
   const { mobile, tablet } = useBreakpoint();
   const isOverlay = mobile || tablet;
 
-  if (!user || user.role === "kitchen") return null;
+  if (!user || user.role === "kitchen" || user.role === "waiter") return null;
 
   if (isOverlay) {
     return (
@@ -368,7 +378,7 @@ export function SidebarOverlay({ show, onClose }) {
 
 export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav, onLogout, holdList=[], setHoldList, showHoldModal, setShowHoldModal, openInvoices=[], onMenuToggle, mobileMenuOpen, setMobileMenuOpen }) {
   const { mobile, tablet } = useBreakpoint();
-  const showHamburger = mobile || tablet;
+  const showHamburger = (mobile || tablet) && user?.role !== "waiter";
 
   const pendingHolds = holdList.filter(h=>h.status==="pending");
   const myHolds = pendingHolds.filter(h=>h.waiter===user?.name);
@@ -385,7 +395,7 @@ export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav
         height: mobile ? 52 : 56,
         padding: mobile ? "0 12px" : "0 24px",
         flexShrink:0,display:"flex",alignItems:"center",
-        justifyContent:"space-between",
+        justifyContent:"space-between",position:"relative",
         borderBottom:`1px solid ${C.border}`,
         boxShadow:"0 1px 0 rgba(0,0,0,0.02)",gap:10,
       }}>
@@ -408,6 +418,18 @@ export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav
             {pageTitle}
           </h1>
         </div>
+
+        {/* Center — logged-in name + live time, in red */}
+        {!mobile && (
+          <div style={{
+            position:"absolute",left:"50%",top:"50%",transform:"translate(-50%,-50%)",
+            display:"flex",alignItems:"center",gap:8,pointerEvents:"none",whiteSpace:"nowrap",
+          }}>
+            <span style={{fontSize:16,fontWeight:800,color:C.error,fontFamily:T.font,letterSpacing:0.3}}>
+              {user?.name} · <HeaderClock/>
+            </span>
+          </div>
+        )}
 
         {/* Right */}
         <div style={{display:"flex",alignItems:"center",gap:mobile?6:10,flexShrink:0}}>

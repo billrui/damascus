@@ -67,3 +67,12 @@ export const strictLimiter = rateLimiter({
   windowSec: 60,
   keyPrefix: 'strict',
 });
+
+// Manager-override PIN checks: 20 attempts per 5 minutes per IP.
+// Tight enough to blunt PIN brute-forcing, loose enough for a busy floor
+// where supervisors legitimately authorize several cancellations.
+export const authorizeLimiter = rateLimiter({
+  max:       20,
+  windowSec: 300,
+  keyPrefix: 'authorize',
+});

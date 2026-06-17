@@ -96,7 +96,7 @@ router.post('/', requirePermission('settings'), validate(createUserSchema), asyn
       manager:     ['dashboard','pos','shift','inventory','reports','expiry','variance','wastage','settings','items','kds'],
       cashier:     ['dashboard','pos','shift'],
       storekeeper: ['dashboard','inventory','expiry','wastage','items'],
-      waiter:      ['pos','inventory_readonly'],
+      waiter:      ['pos'],
       kitchen:     ['kds'],
     };
 
