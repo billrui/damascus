@@ -3,6 +3,16 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { ALL_PERMISSIONS, d } from "../data";
 import { fmt } from "../utils";
 import { Card, Badge, SectionHeader } from "../components/UI";
+import { useBreakpoint } from "../hooks/useBreakpoint";
+
+// Wrap wide tables so they scroll horizontally on small screens instead of overflowing
+function TableScroll({ children, min = 560 }) {
+  return (
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <div style={{ minWidth: min }}>{children}</div>
+    </div>
+  );
+}
 
 // --- EXPORT HELPERS -----------------------------------------------------------
 function exportCSV(profitData, kpis) {
@@ -81,6 +91,7 @@ function exportPDF(profitData, kpis) {
 
 // --- REPORTS VIEW -------------------------------------------------------------
 export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
+  const { mobile } = useBreakpoint();
   const [activeTab, setActiveTab] = useState("profitability");
   const [itemPeriod, setItemPeriod] = useState("daily");
 
@@ -140,9 +151,9 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 28, background: "#F5F2EB" }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: mobile ? 14 : 28, background: "#F5F2EB" }}>
       {/* Tab switcher */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: mobile ? 16 : 24, flexWrap: "wrap" }}>
         {[["profitability", "Item Profitability"], ["top_items", "Top Selling Items"]].map(([id, label]) => (
           <button key={id} onClick={() => setActiveTab(id)} style={{
             padding: "8px 18px", borderRadius: 6, border: "none", cursor: "pointer",
@@ -170,6 +181,7 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
             <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, padding: 48, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>No sales data for this period</div>
           ) : (
             <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
+              <TableScroll min={560}>
               <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
                 {["#","Item","Sold","Revenue","Peak Time",""].map((h,i) => (
                   <div key={i} style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase" }}>{h}</div>
@@ -187,6 +199,7 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
                   </div>
                 </div>
               ))}
+              </TableScroll>
             </div>
           )}
         </div>
@@ -222,7 +235,7 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
         }} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 24 }}>
         {summaryKpis.map((c) => (
           <Card key={c.label} style={{ padding: 18, borderTop: `3px solid ${c.color}` }}>
             <div style={{ 
@@ -247,7 +260,7 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 20 }}>
         <Card>
           <SectionHeader title="Profit by Menu Item" />
           <ResponsiveContainer width="100%" height={240}>
@@ -345,8 +358,8 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
               </button>
             </div>
           </div>
-          <div style={{ overflowY: "auto", maxHeight: 280 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <div style={{ overflowY: "auto", maxHeight: 280, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#F8F8F8" }}>
                   {["Item", "Qty", "Revenue", "COGS", "Profit", "Margin"].map((h) => (

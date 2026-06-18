@@ -17,6 +17,18 @@ const MARGIN       = 12;
 const CONTENT_W    = PAGE_WIDTH - MARGIN * 2;
 const LINE_HEIGHT  = 11;
 
+// Postgres DATE columns come back as JS Date objects; stringifying them raw prints
+// "...00:00:00 GMT+0300 (East Africa Time)". Format to a clean local YYYY-MM-DD.
+function fmtSaleDate(d) {
+  if (!d) return '';
+  const dt = (d instanceof Date) ? d : new Date(d);
+  if (isNaN(dt.getTime())) return String(d).slice(0, 10);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // ─── Build receipt PDF and save to disk ───────────────────────────────────────
 /**
  * @param {object} sale     - full sale row with items array
@@ -66,9 +78,12 @@ export async function generateReceiptPDF(sale, business) {
     doc.font('Helvetica').fontSize(7.5);
 
     row2(doc, 'Invoice:',  sale.id);
-    row2(doc, 'Date:',     `${sale.sale_date}`);
+    row2(doc, 'Date:',     fmtSaleDate(sale.sale_date));
     row2(doc, 'Time:',     `${sale.sale_time || ''}`);
-    if (sale.table_no)   row2(doc, 'Table:',    sale.table_no);
+    if (sale.table_no && /^take.?away$/i.test(String(sale.table_no).trim()))
+                         row2(doc, 'Order:',    'Takeaway');
+    else if (sale.table_no)
+                         row2(doc, 'Table:',    sale.table_no);
     if (sale.customer)   row2(doc, 'Customer:', sale.customer);
     if (sale.cashier_name) row2(doc, 'Cashier:', sale.cashier_name);
     if (sale.waiter_name)  row2(doc, 'Waiter:',  sale.waiter_name);
@@ -223,9 +238,11 @@ export function generateEscPos(sale, business) {
 
   line();
   text(`Invoice: ${sale.id}`); nl();
-  text(`Date:    ${sale.sale_date}`); nl();
+  text(`Date:    ${fmtSaleDate(sale.sale_date)}`); nl();
   text(`Time:    ${sale.sale_time || ''}`); nl();
-  if (sale.table_no)    { text(`Table:   ${sale.table_no}`);     nl(); }
+  if (sale.table_no && /^take.?away$/i.test(String(sale.table_no).trim())) { text(`Order:   Takeaway`); nl(); }
+  else if (sale.table_no)    { text(`Table:   ${sale.table_no}`);     nl(); }
+  if (sale.customer)    { text(`Customer: ${sale.customer}`);    nl(); }
   if (sale.cashier_name){ text(`Cashier: ${sale.cashier_name}`); nl(); }
   line();
 

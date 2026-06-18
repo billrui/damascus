@@ -4,6 +4,16 @@ import { TAX, SVC } from "../data";
 import { shiftsApi } from "../api/index.js";
 import { fmt } from "../utils";
 import { Card, Badge, SectionHeader, Btn } from "../components/UI";
+import { useBreakpoint } from "../hooks/useBreakpoint";
+
+// Wrap wide tables so they scroll horizontally on small screens instead of overflowing
+function TableScroll({ children, min = 620 }) {
+  return (
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <div style={{ minWidth: min }}>{children}</div>
+    </div>
+  );
+}
 
 // --- MOCK SHIFT HISTORY (seed data) ------------------------------------------
 const today = new Date();
@@ -631,6 +641,7 @@ function ZReportModal({ shift, onClose }) {
 
 // --- SHIFT DETAIL MODAL -------------------------------------------------------
 function ShiftDetailModal({ shift, onZReport, onClose }) {
+  const { mobile } = useBreakpoint();
   const pay   = payBreakdown(shift.sales||[]);
   const total = shiftTotal(shift);
   const diff  = variance(shift);
@@ -650,7 +661,7 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
         </div>
         <div style={{ flex:1, overflowY:"auto", padding:24 }}>
           {/* KPIs */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:20 }}>
+          <div style={{ display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(3,1fr)", gap:12, marginBottom:20 }}>
             {[
               { label:"Revenue", val:`KES ${(total||0).toLocaleString()}`, color:"#1A1A1A" },
               { label:"Orders",  val:(shift.sales||[]).length,              color:"#C5A059" },
@@ -777,7 +788,7 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
       </div>
 
       {/* Live stats */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:1, background:"#F0EDE6" }}>
+      <div style={{ display:"grid", gridTemplateColumns:mobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:1, background:"#F0EDE6" }}>
         {[
           { label:"Revenue",      val:`KES ${(isNaN(total)?0:total).toLocaleString()}`,  color:"#1A1A1A" },
           { label:"Orders",       val:(shift.sales||[]).length,                                                    color:"#C5A059" },
@@ -817,6 +828,7 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
 export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShiftsProp, activeShift: activeShiftProp, setActiveShift: setActiveShiftProp, menuItems = [] }) {
   const [_shiftsLocal,      _setShiftsLocal]      = useState(INIT_SHIFTS);
   const [_activeShiftLocal, _setActiveShiftLocal] = useState(null);
+  const { mobile } = useBreakpoint();
   // Use lifted state when provided, otherwise local
   const shifts      = shiftsProp      !== undefined ? shiftsProp      : _shiftsLocal;
   const setShifts   = setShiftsProp   !== undefined ? setShiftsProp   : _setShiftsLocal;
@@ -1087,7 +1099,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
           </div>
 
           {/* Summary KPI row */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 }}>
+          <div style={{ display:"grid", gridTemplateColumns:mobile?"repeat(2,1fr)":"repeat(4,1fr)", gap:mobile?10:14, marginBottom:24 }}>
             {[
               { label:"TOTAL SHIFTS",    val:shifts.length,                       color:"#1A1A1A" },
               { label:"AVG REVENUE",     val:`KES ${avgRevPerShift.toLocaleString()}`, color:"#C5A059" },
@@ -1107,8 +1119,8 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
               <div style={{ fontSize:13, fontWeight:600, color:"#1A1A1A", letterSpacing:"0.5px" }}>Shift History</div>
               <div style={{ fontSize:10, color:"#7A7A7A" }}>{filteredShifts.length} shifts shown</div>
             </div>
-            <div style={{ overflowX:"auto" }}>
-              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <div style={{ overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+              <table style={{ width:"100%", minWidth:900, borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:"#F8F8F8" }}>
                     {["Shift","Date","Cashier","Opened","Closed","Orders","Revenue","Cash","Card","M-Pesa","Variance",""].map((h)=>(
@@ -1175,7 +1187,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
 
       {/* -- SUMMARY TAB — managers and admins only -- */}
       {tab === "summary" && (user.role === "admin" || user.role === "manager") && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+        <div style={{ display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:20 }}>
           <Card>
             <SectionHeader title="Revenue per Shift" />
             <ResponsiveContainer width="100%" height={220}>
@@ -1212,7 +1224,8 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
           {/* Cashier performance */}
           <Card style={{ gridColumn:"1/-1" }}>
             <SectionHeader title="Cashier Performance" />
-            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <div style={{ overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+            <table style={{ width:"100%", minWidth:560, borderCollapse:"collapse" }}>
               <thead>
                 <tr style={{ background:"#F8F8F8" }}>
                   {["Cashier","Shifts","Revenue","Avg / Shift","Balanced","Issues"].map((h)=>(
@@ -1239,7 +1252,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                       <td style={{ padding:"9px 12px", fontSize:11, fontWeight:600 }}>KES {d.revenue.toLocaleString()}</td>
                       <td style={{ padding:"9px 12px", fontSize:11}}>KES {Math.round(d.revenue/d.shifts).toLocaleString()}</td>
 
-<td style={{ padding:"9px 12px" }}><Badge color={GREEN} bg="#ECFDF5">{d.balanced} / {d.shifts}</Badge></td> <td style={{ padding:"9px 12px" }}> {d.issues>0 ? <Badge color={RED} bg="#FEF2F2">{d.issues} variance(s)</Badge> : <Badge color={GREEN} bg="#ECFDF5">Clean</Badge>} </td> </tr> )); })()} </tbody> </table> </Card> </div> )}
+<td style={{ padding:"9px 12px" }}><Badge color={GREEN} bg="#ECFDF5">{d.balanced} / {d.shifts}</Badge></td> <td style={{ padding:"9px 12px" }}> {d.issues>0 ? <Badge color={RED} bg="#FEF2F2">{d.issues} variance(s)</Badge> : <Badge color={GREEN} bg="#ECFDF5">Clean</Badge>} </td> </tr> )); })()} </tbody> </table> </div> </Card> </div> )}
 {/* -- MODALS -- */}
 {modal === "open" && <OpenShiftModal user={user} onOpen={handleOpenShift} onClose={() => setModal(null)} />}
 {modal === "close" && activeShift && <CloseShiftModal shift={activeShift} onClose={() => setModal(null)} onConfirm={handleCloseShift} />}

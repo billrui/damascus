@@ -2,20 +2,26 @@ import { useState, useMemo, useEffect } from "react";
 import { inventoryApi } from "../api";
 import { fmt, fmtK } from "../utils";
 import { Card, Btn, SectionHeader, ExpiryBadge } from "../components/UI";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 
 const _CATS  = ["Proteins","Grains","Vegetables","Oils","Spices","Dairy","Beverages","Spirits","Produce","Bakery","Utilities","Other"];
 
-const fmtStock = (n) => { const f = parseFloat(n)||0; return f%1===0 ? String(f) : f.toFixed(2); };
+const fmtStock = (n) => String(Math.round(parseFloat(n)||0));
 const _UNITS = ["g","kg","ml","l","pcs","loaf","tray","slice","bunch","bottle","can","packet","box","bundle","crate","sack","jerrycan","tin","bar","roll","bag","sachet","cup"];
 
 // --- AddIngredientModal ---
 function AddIngredientModal({ onClose, onSaved }) {
+  const { mobile } = useBreakpoint();
   const [form, setForm] = useState({ name:"", unit:"g", category:"", reorder_level:"", purchase_unit:"", purchase_qty:"", purchase_cost:"", opening_stock:"" });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
   const set = (k,v) => setForm(p => ({ ...p, [k]:v }));
   const costPerUnit = (form.purchase_cost && form.purchase_qty && parseFloat(form.purchase_qty) > 0)
-    ? (parseFloat(form.purchase_cost) / parseFloat(form.purchase_qty))% 1 === 0 ? s : parseFloat(s.toFixed(2)) : "";
+    ? (() => {
+        const v = parseFloat(form.purchase_cost) / parseFloat(form.purchase_qty);
+        return v % 1 === 0 ? v : parseFloat(v.toFixed(2));
+      })()
+    : "";
   const isUtil = form.category === "Utilities";
 
   const save = async () => {
@@ -59,7 +65,7 @@ function AddIngredientModal({ onClose, onSaved }) {
         </div>
         {error && <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:12 }}>{error}</div>}
         {isUtil && <div style={{ padding:"8px 12px", background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:4, fontSize:11, color:"#92400E", marginBottom:12 }}>Utility items appear in the recipe builder for water, gas and charcoal cost tracking.</div>}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12 }}>
           <div style={{ gridColumn:"1/-1" }}>
             <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase" }}>Name *</label>
             <input value={form.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. Fresh Milk, LPG Gas, Sugar" style={{ ...fi, marginTop:4 }} autoFocus />
@@ -135,6 +141,7 @@ function AddIngredientModal({ onClose, onSaved }) {
 
 // --- EditIngredientModal ---
 function EditIngredientModal({ ingredient, onClose, onSaved }) {
+  const { mobile } = useBreakpoint();
   const [form, setForm] = useState({
     name:          ingredient.name || "",
     unit:          ingredient.unit || "g",
@@ -176,7 +183,7 @@ function EditIngredientModal({ ingredient, onClose, onSaved }) {
             <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase" }}>Name *</label>
             <input value={form.name} onChange={e=>set("name",e.target.value)} style={{ ...fi, marginTop:4 }} />
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12 }}>
             <div>
               <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase" }}>Unit</label>
               <select value={form.unit} onChange={e=>set("unit",e.target.value)} style={{ ...fi, marginTop:4 }}>
@@ -246,6 +253,7 @@ function DeleteConfirmModal({ ingredient, onClose, onDeleted }) {
 }
 
 export function InventoryView({ batches, setBatches, ingredients: propIngredients, setIngredients, storeIssues, setStoreIssues, user, subView }) {
+  const { mobile } = useBreakpoint();
   const INGREDIENTS = propIngredients || [];
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("all");
@@ -271,13 +279,14 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
       .map(ing => {
         const ingBatches    = batches.filter(b => b.ingredientId === ing.id && (filterLoc === "all" || b.location === filterLoc));
         const activeBatches = ingBatches.filter(b => b.status === "active");
-        const totalActive   = activeBatches.reduce((s, b) => s + b.remaining, 0);
+        const totalActive   = activeBatches.reduce((s, b) => s + (parseFloat(b.remaining)||0), 0);
         const sortedActive  = [...activeBatches].sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
         const earliestExp   = sortedActive[0];
-        const isLow         = totalActive <= (ing.reorderLevel || 0);
-        const value         = totalActive * (ing.costPerUnit || 0);
+        const isLow         = totalActive <= (ing.reorderLevel || ing.reorder_level || 0);
+        const costPerUnit   = parseFloat(ing.costPerUnit ?? ing.cost_per_unit) || 0;
+        const value         = totalActive * costPerUnit;
         const expiryMs      = earliestExp ? new Date(earliestExp.expiry).getTime() : Infinity;
-        return { ...ing, ingBatches, activeBatches: sortedActive, totalActive, earliestExp, isLow, value, expiryMs };
+        return { ...ing, costPerUnit, ingBatches, activeBatches: sortedActive, totalActive, earliestExp, isLow, value, expiryMs };
       })
       .filter(ing => ing.ingBatches.length > 0 || filterLoc === "all");
     if (fefoSort) {
@@ -325,7 +334,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
 
   // Main ingredient list
   return (
-    <div style={{ flex:1, overflowY:"auto", padding:28, background:"#F5F2EB" }}>
+    <div style={{ flex:1, overflowY:"auto", padding: mobile ? 14 : 28, background:"#F5F2EB" }}>
       {showAdd && (
         <AddIngredientModal
           onClose={() => setShowAdd(false)}
@@ -361,22 +370,6 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
           }}
         />
       )}
-      {editIng && (
-        <EditIngredientModal
-          ingredient={editIng}
-          onClose={() => setEditIng(null)}
-          onSaved={updated => {
-            setIngredients && setIngredients(prev => (prev||[]).map(i =>
-              i.id === updated.id ? { ...i, ...updated, reorderLevel: updated.reorder_level||0, costPerUnit: parseFloat(updated.cost_per_unit)||0 } : i
-            ));
-            setEditIng(null);
-          }}
-          onDeleted={id => {
-            setIngredients && setIngredients(prev => (prev||[]).filter(i => i.id !== id));
-            setEditIng(null);
-          }}
-        />
-      )}
 
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
         <SectionHeader title="Ingredients and Batches" sub="FEFO active - expiring items prioritized" />
@@ -401,7 +394,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
         </button>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:24 }}>
+      <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)", gap:12, marginBottom:24 }}>
         {[
           { label:"Total Items",     value:INGREDIENTS.length,                              bg:"#EFF6FF" },
           { label:"Low Stock",       value:data.filter(d => d.isLow).length,               bg:"#FFFBEB", alert:true },
@@ -421,7 +414,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
         </div>
       ) : (
         <div style={{ background:"#FFF", borderRadius:8, border:"1px solid #E5E0D5", overflow:"hidden" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <div style={{ overflowX:"auto", WebkitOverflowScrolling:"touch" }}><table style={{ width:"100%", minWidth: mobile ? 560 : "auto", borderCollapse:"collapse" }}>
             <thead>
               <tr style={{ background:"#1A1A1A" }}>
                 {["Ingredient","Category","Stock","Unit Cost","Value","Expiry","Status"].map(h => (
@@ -439,11 +432,11 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
                     <td style={{ padding:"12px 16px", fontSize:13, fontWeight:600, color:"#1A1A1A" }}>{ing.name}</td>
                     <td style={{ padding:"12px 16px", fontSize:12, color:"#7A7A7A" }}>{ing.category}</td>
                     <td style={{ padding:"12px 16px", fontSize:13, fontWeight:600, color: ing.isLow ? "#8B3A3A" : "#1A1A1A", fontFamily:"monospace" }}>
-                      {ing.totalActive} {ing.unit}
+                      {Math.round(ing.totalActive)} {ing.unit}
                       {ing.isLow && <span style={{ marginLeft:6, fontSize:10, background:"#FEF2F2", color:"#8B3A3A", padding:"2px 6px", borderRadius:3 }}>LOW</span>}
                     </td>
-                    <td style={{ padding:"12px 16px", fontSize:12, color:"#4A4A4A", fontFamily:"monospace" }}>KES {ing.costPerUnit}/{ing.unit}</td>
-                    <td style={{ padding:"12px 16px", fontSize:12, color:"#4A4A4A", fontFamily:"monospace" }}>KES {ing.value.toFixed(2)}</td>
+                    <td style={{ padding:"12px 16px", fontSize:12, color:"#4A4A4A", fontFamily:"monospace" }}>KES {Math.round(ing.costPerUnit)}/{ing.unit}</td>
+                    <td style={{ padding:"12px 16px", fontSize:12, color:"#4A4A4A", fontFamily:"monospace" }}>KES {Math.round(ing.value).toLocaleString()}</td>
                     <td style={{ padding:"12px 16px" }}>
                       {ing.earliestExp
                         ? <span style={{ background:expBg, color:expColor, fontSize:11, fontWeight:600, padding:"3px 8px", borderRadius:4 }}>
@@ -466,7 +459,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         </div>
       )}
     </div>
@@ -475,6 +468,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
 
 // --- InventoryReadOnlyView ---
 export function InventoryReadOnlyView({ batches, ingredients }) {
+  const { mobile } = useBreakpoint();
   const [search,    setSearch]    = useState("");
   const [liveStock, setLiveStock] = useState(null); // null = use prop batches
   const today = new Date();
@@ -489,12 +483,12 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
   const activeBatches = liveStock || batches;
   const ing = (ingredients||[]).filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
   return (
-    <div style={{ flex:1, overflowY:"auto", padding:28, background:"#F5F2EB" }}>
+    <div style={{ flex:1, overflowY:"auto", padding: mobile ? 14 : 28, background:"#F5F2EB" }}>
       <SectionHeader title="Stock Viewer" sub={liveStock ? `Live stock — ${activeBatches.filter(b=>b.status==="active").length} active batches` : "Loading..."} />
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..."
         style={{ marginTop:16, marginBottom:16, padding:"8px 14px", border:"1px solid #E5E0D5", borderRadius:4, fontSize:12, width:"100%", maxWidth:300, boxSizing:"border-box" }} />
       <div style={{ background:"#FFF", borderRadius:8, border:"1px solid #E5E0D5", overflow:"hidden" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+        <div style={{ overflowX:"auto", WebkitOverflowScrolling:"touch" }}><table style={{ width:"100%", minWidth: mobile ? 560 : "auto", borderCollapse:"collapse" }}>
           <thead>
             <tr style={{ background:"#1A1A1A" }}>
               {["Ingredient","Category","Stock","Unit","Reorder"].map(h => (
@@ -506,7 +500,7 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
             {ing.map((i,idx) => {
               const bId = i.id;
               const stockRaw = parseFloat(activeBatches.filter(b=>(b.ingredientId||b.ingredient_id)===bId&&b.status==="active").reduce((s,b)=>s+(parseFloat(b.remaining)||0),0));
-              const stock = stockRaw % 1 === 0 ? stockRaw : parseFloat(stockRaw.toFixed(2));
+              const stock = Math.round(stockRaw);
               const reorder = i.reorderLevel || i.reorder_level || 0;
               const isLow = stock > 0 && stock <= reorder;
               const isOut = stock <= 0;
@@ -525,7 +519,7 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
             })}
             {ing.length===0 && <tr><td colSpan={4} style={{ padding:40, textAlign:"center", color:"#9CA3AF" }}>No ingredients found</td></tr>}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );
@@ -533,6 +527,7 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
 
 
 export function ReceiveStockView({ batches, setBatches, ingredients: propIngredients = [] }) {
+  const { mobile } = useBreakpoint();
   const [selected, setSelected] = useState(null);
   const [form, setForm]         = useState({ batchNo:"", qty:"", costPerUnit:"", expiry:"", location:"Main Store" });
   const [search, setSearch]     = useState("");
@@ -584,11 +579,11 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
 
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", background:"#F5F2EB" }}>
-      <div style={{ padding:"20px 28px 12px", flexShrink:0 }}>
+      <div style={{ padding: mobile ? "14px 12px 10px" : "20px 28px 12px", flexShrink:0 }}>
         <SectionHeader title="Receive Stock" sub="Click an ingredient to record a delivery" />
         {saved && <div style={{ marginTop:10, padding:"8px 14px", background:"#F0FDF4", border:"1px solid #86EFAC", borderRadius:4, fontSize:11, color:"#15803D", fontWeight:600 }}>Stock received and added to inventory!</div>}
       </div>
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"280px 1fr 290px", gap:16, padding:"0 28px 28px", overflow:"hidden" }}>
+      <div style={{ flex:1, display:"grid", gridTemplateColumns: mobile ? "1fr" : "280px 1fr 290px", gap:16, padding: mobile ? "0 12px 16px" : "0 28px 28px", overflow:"hidden" }}>
 
         {/* LEFT: ingredient list */}
         <div style={{ display:"flex", flexDirection:"column", gap:8, overflow:"hidden" }}>
@@ -596,7 +591,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
             {filtered.length===0 && <div style={{ padding:24, textAlign:"center", color:"#9CA3AF", fontSize:12 }}>No ingredients yet - add them in Inventory first</div>}
             {filtered.map(ing => {
-              const stock = batches.filter(b=>(b.ingredientId||b.ingredient_id)===ing.id&&b.status==="active").reduce((s,b)=>s+b.remaining,0);
+              const stock = batches.filter(b=>(b.ingredientId||b.ingredient_id)===ing.id&&b.status==="active").reduce((s,b)=>s+(parseFloat(b.remaining)||0),0);
               const isSel = selected?.id===ing.id;
               const isLow = stock<=(ing.reorderLevel||ing.reorder_level||0);
               return (
@@ -605,7 +600,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                   <div style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>{ing.name}</div>
                   <div style={{ display:"flex", justifyContent:"space-between", marginTop:3 }}>
                     <span style={{ fontSize:10, color:"#7A7A7A" }}>{ing.category}</span>
-                    <span style={{ fontSize:10, fontWeight:600, color:stock<=0?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>{stock} {ing.unit}</span>
+                    <span style={{ fontSize:10, fontWeight:600, color:stock<=0?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>{Math.round(stock)} {ing.unit}</span>
                   </div>
                 </div>
               );
@@ -655,7 +650,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                     );
                   })()}
                 </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12 }}>
                   <div>
                     {(() => {
                       const pUnit = selected.purchase_unit || selected.purchaseUnit;
@@ -685,7 +680,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                     </div>
                   </div>
                 </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12 }}>
                   <div>
                     <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Expiry Date</label>
                     <input type="date" value={form.expiry} onChange={e=>setForm(f=>({...f,expiry:e.target.value}))} style={{ ...fi, marginTop:4 }} />
@@ -740,6 +735,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
 
 // --- ISSUE STOCK VIEW ---
 export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssues, user, ingredients: propIngredients = [] }) {
+  const { mobile } = useBreakpoint();
 
   const [search,   setSearch]   = useState("");
   const [qtys,     setQtys]     = useState({});   // { ingredientId: qtyString }
@@ -754,9 +750,9 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
   }, [saved]);
 
   const availBatches = (ingId) => batches
-    .filter(b=>(b.ingredientId||b.ingredient_id)===ingId&&b.status==="active"&&b.remaining>0)
+    .filter(b=>(b.ingredientId||b.ingredient_id)===ingId&&b.status==="active"&&(parseFloat(b.remaining)||0)>0)
     .sort((a,b)=>new Date(a.expiry)-new Date(b.expiry));
-  const totalAvail = (ingId) => availBatches(ingId).reduce((s,b)=>s+b.remaining,0);
+  const totalAvail = (ingId) => availBatches(ingId).reduce((s,b)=>s+(parseFloat(b.remaining)||0),0);
 
   const filtered = propIngredients
     .filter(i=>i.name.toLowerCase().includes(search.toLowerCase()))
@@ -823,7 +819,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
     <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", background:"#F5F2EB" }}>
 
       {/* Header */}
-      <div style={{ padding:"20px 28px 14px", flexShrink:0, borderBottom:"1px solid #E5E0D5", background:"#FFFFFF" }}>
+      <div style={{ padding: mobile ? "14px 12px 10px" : "20px 28px 14px", flexShrink:0, borderBottom:"1px solid #E5E0D5", background:"#FFFFFF" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
           <div>
             <SectionHeader title="Issue Stock to Kitchen" sub="Enter quantities issued — stock deducted automatically (FEFO)" />
@@ -844,11 +840,11 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
       </div>
 
       {/* Main — two columns */}
-      <div style={{ flex:1, display:"flex", overflow:"hidden", gap:0 }}>
+      <div style={{ flex:1, display:"flex", flexDirection: mobile ? "column" : "row", overflow: mobile ? "auto" : "hidden", gap:0 }}>
 
         {/* Issue sheet */}
         <div style={{ flex:1, overflowY:"auto", padding:"16px 28px" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <div style={{ overflowX:"auto", WebkitOverflowScrolling:"touch" }}><table style={{ width:"100%", minWidth: mobile ? 560 : "auto", borderCollapse:"collapse", fontSize:13 }}>
             <thead>
               <tr style={{ background:"#F5F2EB", borderBottom:"2px solid #E5E0D5" }}>
                 {["Ingredient","Unit","In Stock","Qty to Issue",""].map(h=>(
@@ -874,7 +870,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
                     <td style={{ padding:"10px 12px", color:"#7A7A7A", fontSize:11 }}>{ing.unit}</td>
                     <td style={{ padding:"10px 12px" }}>
                       <span style={{ fontWeight:600, color:noStock?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>
-                        {noStock?"OUT":avail}
+                        {noStock?"OUT":Math.round(avail)}
                       </span>
                     </td>
                     <td style={{ padding:"6px 12px", width:140 }}>
@@ -909,18 +905,18 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         </div>
 
         {/* Right: recent issues log */}
-        <div style={{ width:260, background:"#FFFFFF", borderLeft:"1px solid #E5E0D5", overflowY:"auto", padding:20, flexShrink:0 }}>
+        <div style={{ width: mobile ? "100%" : 260, background:"#FFFFFF", borderLeft:"1px solid #E5E0D5", overflowY:"auto", padding:20, flexShrink:0 }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#1A1A1A", marginBottom:14, letterSpacing:0.3 }}>Recent Issues</div>
           {issueLog.length===0 && <div style={{ color:"#9CA3AF", fontSize:11, textAlign:"center", marginTop:20 }}>No issues recorded yet</div>}
           {issueLog.map(iss=>(
             <div key={iss.id} style={{ padding:"9px 0", borderBottom:"1px solid #F0EDE6" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
                 <span style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>{iss.ingredient_name||iss.ingredient_id}</span>
-                <span style={{ fontSize:11, fontWeight:700, color:"#8B3A3A" }}>-{iss.qty}</span>
+                <span style={{ fontSize:11, fontWeight:700, color:"#8B3A3A" }}>-{Math.round(parseFloat(iss.qty)||0)}</span>
               </div>
               <div style={{ fontSize:10, color:"#7A7A7A", marginTop:1 }}>{iss.to_location}</div>
               <div style={{ fontSize:10, color:"#9CA3AF" }}>{iss.issue_date?new Date(iss.issue_date).toLocaleDateString():"Today"} · {iss.issued_by_name||"-"}</div>

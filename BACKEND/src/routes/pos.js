@@ -57,12 +57,14 @@ const saleItemSchema = z.object({
   qty:          z.coerce.number().int().min(1),
   unit_price:   z.coerce.number().min(0),          // price at time of sale
   name:         z.string().optional(),             // snapshot
+  note:         z.string().max(500).optional(),    // carries [Pn] person tag
 });
 
 const createSaleSchema = z.object({
   items:        z.array(saleItemSchema).min(1),
   customer:     z.string().max(100).default('Walk-in'),
   table_no:     z.string().max(20).nullable().optional(),
+  person:       z.string().max(60).nullable().optional(), // explicit person label (P1 / P1, P2)
   payment:      z.enum(['cash','card','mpesa','credit','split']),
   payment_ref:  z.string().max(100).nullable().optional(),
   tendered:     z.coerce.number().optional(),
@@ -103,7 +105,7 @@ const updateHoldSchema = z.object({
 router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSaleSchema), async (req, res, next) => {
   try {
     const {
-      items, customer, table_no, payment, payment_ref,
+      items, customer, table_no, person, payment, payment_ref,
       tendered, discount_pct, waiter_id, shift_id, offline_id, open_invoice_id,
     } = req.body;
 
@@ -146,20 +148,27 @@ router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSa
 
       const invoice_id = await nextInvoiceId(client);
 
+      // Person label (P1 / P1, P2): use explicit value, else derive from item [Pn] tags
+      const personLabel = (person && String(person).trim())
+        || [...new Set((items || [])
+        .map(i => (i.note || '').match(/^\[([^\]]+)\]/)?.[1])
+        .filter(p => p && p !== 'null' && p !== 'undefined'))].join(', ');
+
       // Insert sale header
       const { rows: saleRows } = await client.query(
         `INSERT INTO sales
            (id, sale_date, sale_time, customer, table_no, shift_id,
             subtotal, discount_pct, discount_amt, total,
-            payment, payment_ref, cashier_id, waiter_id, offline_id, status)
+            payment, payment_ref, cashier_id, waiter_id, offline_id, status, person)
          VALUES
            ($1, CURRENT_DATE, CURRENT_TIME, $2, $3, $4,
             $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, 'paid')
+            $9, $10, $11, $12, $13, 'paid', $14)
          RETURNING *`,
         [invoice_id, customer, table_no || null, shift_id || null,
          subtotal, discount_pct, discount_amt, total,
-         payment, payment_ref || null, req.user.sub, waiter_id || null, offline_id || null]
+         payment, payment_ref || null, req.user.sub, waiter_id || null, offline_id || null,
+         personLabel || null]
       );
 
       const sale = saleRows[0];
@@ -579,6 +588,11 @@ router.get('/holds/:id/prebill', async (req, res, next) => {
       ? items.filter(i => { const m=(i.note||'').match(/^\[([^\]]+)\]/); return m?m[1]===person:true; })
       : items;
 
+    // Person label: explicit, else derived from item [Pn] tags
+    const personLabel = person || [...new Set(filtered
+      .map(i => (i.note || '').match(/^\[([^\]]+)\]/)?.[1])
+      .filter(p => p && p !== 'null' && p !== 'undefined'))].join(', ');
+
     const sub   = filtered.reduce((s,i) => s + i.price * i.qty, 0);
     const TAX   = parseFloat(env.TAX_RATE  || '0.16');
     const SVC   = parseFloat(env.SVC_RATE  || '0.02');
@@ -615,7 +629,7 @@ router.get('/holds/:id/prebill', async (req, res, next) => {
     // Bill info
     doc.font('Helvetica-Bold').fontSize(9).text('PRE-BILL', { width: CONTENT_W, align: 'center' });
     doc.font('Helvetica').fontSize(8)
-       .text('Table: ' + (hold.table_no || 'Walk-in') + (person ? '   Person: ' + person : ''), { width: CONTENT_W, align: 'center' })
+       .text('Table: ' + (hold.table_no || 'Walk-in') + (personLabel ? '   Person: ' + personLabel : ''), { width: CONTENT_W, align: 'center' })
        .text('Date: ' + new Date().toLocaleString('en-KE'), { width: CONTENT_W, align: 'center' });
 
     doc.moveDown(0.3).moveTo(MARGIN, doc.y).lineTo(PAGE_WIDTH - MARGIN, doc.y).stroke();
@@ -692,8 +706,13 @@ router.post('/holds/:id/print', async (req, res, next) => {
     const TAX = parseFloat(env.TAX_RATE || '0.16');
     const SVC = parseFloat(env.SVC_RATE || '0.02');
 
+    // Person label for the receipt: explicit person, else derived from item [Pn] tags
+    const personLabel = person || [...new Set(filtered
+      .map(i => (i.note || '').match(/^\[([^\]]+)\]/)?.[1])
+      .filter(p => p && p !== 'null' && p !== 'undefined'))].join(', ');
+
     // Receipt #1 — fire-and-forget to waiter thermal printer (never 500 on printer failure)
-    const escData = buildPrebillEscPos({ hold, items: filtered, person, business, TAX, SVC });
+    const escData = buildPrebillEscPos({ hold, items: filtered, person: personLabel, business, TAX, SVC });
     printRaw(escData).catch(err =>
       console.warn('⚠️  Waiter printer unreachable:', err.message)
     );

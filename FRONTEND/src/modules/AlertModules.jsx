@@ -2,6 +2,7 @@ import { useState } from "react";
 import { d } from "../data";
 import { classifyExpiry, computeVariance } from "../utils";
 import { Card, Badge, Btn, Select, Input, SectionHeader, ExpiryBadge, FlagBadge } from "../components/UI";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 
 // --- LUXURY HOTEL THEME CONSTANTS ---------------------------------------------
 const LUXURY_THEME = {
@@ -189,6 +190,7 @@ function VarianceCell({ variance, variancePct, shrinkageValue }) {
 
 // --- EXPIRY CONTROL VIEW ------------------------------------------------------
 export function ExpiryView({ batches, setBatches, wastage, setWastage, user, ingredients = [] }) {
+  const { mobile } = useBreakpoint();
   const [filterStatus, setFilterStatus] = useState("all");
 
   const enriched = batches
@@ -239,9 +241,9 @@ export function ExpiryView({ batches, setBatches, wastage, setWastage, user, ing
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 32, background: "#F5F2EB" }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: mobile ? 14 : 32, background: "#F5F2EB" }}>
       <SectionHeader title="Expiry Control" sub="First Expired, First Out (FEFO) monitoring" />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 24 }}>
         {expiryCounters.map((c) => (
           <Card key={c.label} style={{ padding: 16, borderLeft: `4px solid ${c.color}`, background: c.bg }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: LUXURY_THEME.textMuted, letterSpacing: 1, marginBottom: 6, textTransform: "uppercase" }}>{c.label}</div>
@@ -316,6 +318,7 @@ export function ExpiryView({ batches, setBatches, wastage, setWastage, user, ing
 
 // --- VARIANCE VIEW WITH DIFFERENT COLORS --------------------------------------
 export function VarianceView({ batches, storeIssues, sales, ingredients = [], recipes = {} }) {
+  const { mobile } = useBreakpoint();
   const [filterFlag, setFilterFlag] = useState("all");
   const data = computeVariance(batches, storeIssues, sales, ingredients, recipes).filter((r) => filterFlag === "all" || r.flag === filterFlag);
   
@@ -330,10 +333,10 @@ export function VarianceView({ batches, storeIssues, sales, ingredients = [], re
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 32, background: "#F5F2EB" }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: mobile ? 14 : 32, background: "#F5F2EB" }}>
       <SectionHeader title="Variance & Reconciliation" sub="Theoretical vs Issued vs Physical comparison" />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 24 }}>
         {summaryCards.map((c) => (
           <Card key={c.label} style={{ padding: 16, borderLeft: `4px solid ${c.color}`, background: c.bg }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: LUXURY_THEME.textMuted, letterSpacing: 1, marginBottom: 6, textTransform: "uppercase" }}>{c.label}</div>
@@ -355,7 +358,7 @@ export function VarianceView({ batches, storeIssues, sales, ingredients = [], re
           <div style={{ fontSize: 13, fontWeight: 700, color: LUXURY_THEME.primary, textAlign: "center", marginBottom: 12 }}>Variance = Issued - Theoretical</div>
         </div>
         
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "repeat(2, 1fr)", gap: 16 }}>
           <div style={{ background: "rgba(220, 38, 38, 0.1)", borderRadius: 6, padding: "12px 16px", borderLeft: `3px solid #DC2626` }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}><span style={{ fontSize: 16, color: "#DC2626" }}>-</span><span style={{ fontWeight: 700, color: "#DC2626", fontSize: 12 }}>Positive Variance (Over-Issuance)</span></div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", lineHeight: 1.5 }}>
@@ -460,6 +463,7 @@ export function VarianceView({ batches, storeIssues, sales, ingredients = [], re
 
 // --- WASTAGE VIEW -------------------------------------------------------------
 export function WastageView({ wastage, setWastage, batches, user, ingredients = [] }) {
+  const { mobile } = useBreakpoint();
   const [form, setForm] = useState({ ingredientId: "I01", batchId: "", qty: "", reason: "expired" });
   const [saved, setSaved] = useState(false);
 
@@ -490,10 +494,10 @@ export function WastageView({ wastage, setWastage, batches, user, ingredients = 
   };
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 32, background: "#F5F2EB" }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: mobile ? 14 : 32, background: "#F5F2EB" }}>
       <SectionHeader title="Wastage Register" sub="Record spoilage, expired stock, and manual write-offs" />
       
-      <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "360px 1fr", gap: mobile ? 16 : 24 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <Card>
             <div style={{ fontWeight: 600, fontSize: 13, color: LUXURY_THEME.textPrimary, marginBottom: 18 }}>Record Wastage</div>

@@ -237,25 +237,35 @@ router.post('/issues', requirePermission('inventory'), validate(issueSchema), as
     const issue = await db.transaction(async (client) => {
       const issue_ref = await nextIssueRef(client);
 
-      // Deduct from batch if batch_id provided
-      if (batch_id) {
-        const { rows: batchRows } = await client.query(
-          `SELECT remaining FROM batches WHERE id = $1 AND status = 'active' FOR UPDATE`,
-          [batch_id]
-        );
-        if (!batchRows[0]) throw Object.assign(new Error('Batch not found or inactive'), { status: 404 });
-        if (batchRows[0].remaining < qty) {
-          throw Object.assign(new Error(`Insufficient stock in batch (available: ${batchRows[0].remaining})`), { status: 422 });
-        }
+      // FEFO deduction across ALL active batches for this ingredient (earliest expiry first).
+      // (A single batch rarely holds the whole issued quantity, so we draw across batches.)
+      const { rows: batchRows } = await client.query(
+        `SELECT id, remaining FROM batches
+          WHERE ingredient_id = $1 AND status = 'active' AND remaining > 0
+          ORDER BY expiry ASC NULLS LAST, created_at ASC
+          FOR UPDATE`,
+        [ingredient_id]
+      );
+      const totalAvail = batchRows.reduce((s, b) => s + Number(b.remaining), 0);
+      if (totalAvail < qty) {
+        throw Object.assign(new Error(`Insufficient stock (available: ${totalAvail})`), { status: 422 });
+      }
 
+      let needed = qty;
+      let recordBatchId = batch_id || null;
+      for (const b of batchRows) {
+        if (needed <= 0) break;
+        const take = Math.min(Number(b.remaining), needed);
         await client.query(
           `UPDATE batches
-           SET remaining = remaining - $1,
-               status    = CASE WHEN remaining - $1 <= 0 THEN 'depleted' ELSE status END,
-               updated_at = now()
-           WHERE id = $2`,
-          [qty, batch_id]
+              SET remaining  = remaining - $1,
+                  status     = CASE WHEN remaining - $1 <= 0 THEN 'depleted' ELSE status END,
+                  updated_at = now()
+            WHERE id = $2`,
+          [take, b.id]
         );
+        if (!recordBatchId) recordBatchId = b.id;
+        needed -= take;
       }
 
       // Compute value
@@ -270,7 +280,7 @@ router.post('/issues', requirePermission('inventory'), validate(issueSchema), as
          VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
         [issue_ref, from_location || 'Main Store', to_location,
-         ingredient_id, batch_id || null, qty, req.user.sub]
+         ingredient_id, recordBatchId, qty, req.user.sub]
       );
 
       return { ...rows[0], value };

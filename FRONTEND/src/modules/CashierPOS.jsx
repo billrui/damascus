@@ -4,6 +4,7 @@ import { fmt, deductStock } from "../utils";
 import { T, pillBtn, actionBtn, overlay, modal as modalStyle } from "../posTheme";
 import { shiftsApi } from "../api/index.js";
 import { ReceiptModal } from "../components/POSShared";
+import { useBreakpoint } from "../hooks/useBreakpoint";
 
 // ── SVG Icons ─────────────────────────────────────────────────────────────────
 const Icon = {
@@ -109,6 +110,10 @@ function InvoiceCard({ inv, isSelected, onSelect, onReceipt, normalizeItems }) {
   const isVoided = inv.status === "voided";
   const dispTotal = inv.finalTotal ?? inv.total;
   const items = normalizeItems(inv.items);
+  const persons = [...new Set(items
+    .map(i => (i.note || "").match(/^\[([^\]]+)\]/)?.[1])
+    .filter(p => p && p !== "null" && p !== "undefined"))];
+  const personLabel = persons.join(", ");
 
   const borderColor = isSelected ? T.amber
     : isPaid   ? `${T.success}60`
@@ -145,8 +150,13 @@ function InvoiceCard({ inv, isSelected, onSelect, onReceipt, normalizeItems }) {
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: T.textSecondary }}>
-              <Icon.Table /> Table {inv.table || "—"}
+              <Icon.Table /> {/^take.?away$/i.test(String(inv.table || "")) ? "Takeaway" : `Table ${inv.table || "—"}`}
             </span>
+            {personLabel && (
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: T.amber, padding: "1px 8px", borderRadius: 10 }}>
+                {personLabel}
+              </span>
+            )}
             <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: T.textMuted }}>
               <Icon.User /> {inv.waiter || "—"}
             </span>
@@ -348,6 +358,7 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
   const [receipt,       setReceipt]       = useState(null);
   const [showShiftWarning, setShowShiftWarning] = useState(false);
   const [showOpenShift,    setShowOpenShift]    = useState(false);
+  const { mobile } = useBreakpoint();
 
   const phoneInputRef = useRef(null);
 
@@ -401,12 +412,17 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
     setProcessing(true);
     try {
       const total = Math.round(selectedInv.finalTotal ?? selectedInv.total);
-      const items = normalizeItems(selectedInv.items).map(i => ({
+      const normItems = normalizeItems(selectedInv.items);
+      const items = normItems.map(i => ({
         menu_item_id: i.menuId || i.menu_item_id,
         qty:          i.qty,
         unit_price:   i.price || i.unit_price || 0,
         name:         i.name || "",
+        note:         i.note || "",
       }));
+      const personLabel = [...new Set(normItems
+        .map(i => (i.note || "").match(/^\[([^\]]+)\]/)?.[1])
+        .filter(p => p && p !== "null" && p !== "undefined"))].join(", ");
 
       let paymentMethod = payMethod;
       let paymentRef    = null;
@@ -424,7 +440,8 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
       const { posApi } = await import("../api/index.js");
       const saved = await posApi.createSale({
         items,
-        customer:    (selectedInv.table_no || selectedInv.table) ? `Table ${selectedInv.table_no || selectedInv.table}` : "Walk-in",
+        customer:    personLabel || selectedInv.customer || "Walk-in",
+        person:      personLabel || null,
         table_no:    selectedInv.table_no || selectedInv.table || null,
         payment:     paymentMethod,
         payment_ref: paymentRef,
@@ -546,6 +563,7 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
       <style>{styleTag}</style>
       <div style={{ flex: 1, display: "flex", overflow: "hidden", background: T.bg, fontFamily: T.font, color: T.textPrimary }}>
 
+        {!mobile && (<>
         {/* ── LEFT: Invoice sidebar ─────────────────────────────────────────── */}
         <div style={{ width: 390, display: "flex", flexDirection: "column", background: T.surface, borderRight: `1px solid ${T.border}` }}>
 
@@ -741,8 +759,14 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
                   </button>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: T.textPrimary, letterSpacing: -0.2 }}>Invoice INV-{selectedInv.id}</div>
-                    <div style={{ fontSize: 11, color: T.textMuted, marginTop: 2, display: "flex", gap: 10 }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Icon.Table /> Table {selectedInv.table || "—"}</span>
+                    <div style={{ fontSize: 11, color: T.textMuted, marginTop: 2, display: "flex", gap: 10, alignItems: "center" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Icon.Table /> {/^take.?away$/i.test(String(selectedInv.table || "")) ? "Takeaway" : `Table ${selectedInv.table || "—"}`}</span>
+                      {(() => {
+                        const ppl = [...new Set(normalizeItems(selectedInv.items)
+                          .map(i => (i.note || "").match(/^\[([^\]]+)\]/)?.[1])
+                          .filter(p => p && p !== "null" && p !== "undefined"))].join(", ");
+                        return ppl ? <span style={{ fontWeight: 700, color: "#fff", background: T.amber, padding: "1px 8px", borderRadius: 10 }}>{ppl}</span> : null;
+                      })()}
                       <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Icon.User /> {selectedInv.waiter || "—"}</span>
                     </div>
                   </div>
@@ -1106,6 +1130,214 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
             </div>
           )}
         </div>
+        </>)}
+
+        {/* ══════════════════ MOBILE CASHIER UI ══════════════════ */}
+        {mobile && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", background:T.bg, position:"relative" }}>
+
+            {/* Header */}
+            <div style={{ flexShrink:0, padding:"14px 16px", borderBottom:`1px solid ${T.border}`, background:T.surface, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                <div style={{ fontSize:11, fontWeight:800, color:T.amber, letterSpacing:1, textTransform:"uppercase" }}>Cashier Terminal</div>
+                <div style={{ fontSize:10, color:T.textMuted, marginTop:2, display:"flex", alignItems:"center", gap:5 }}><Icon.User /> {user.name}</div>
+              </div>
+              <div style={{ background: openCount>0?`${T.amber}18`:T.card, border:`1px solid ${openCount>0?T.amber:T.border}`, color:openCount>0?T.amber:T.textMuted, padding:"5px 12px", borderRadius:6, fontSize:11, fontWeight:800 }}>
+                {openCount} OPEN
+              </div>
+            </div>
+
+            {/* ── LIST ── */}
+            {step==="list" && (
+              <div style={{ flex:1, overflowY:"auto", padding:14 }}>
+                {!activeShift && (
+                  <div style={{ background:`${T.error}12`, border:`1px solid ${T.error}40`, borderRadius:10, padding:14, marginBottom:14, textAlign:"center" }}>
+                    <div style={{ fontSize:13, fontWeight:800, color:T.error, marginBottom:4 }}>No shift open</div>
+                    <div style={{ fontSize:11, color:T.textMuted, marginBottom:10 }}>Open a shift to start taking payments</div>
+                    <button onClick={()=>setShowOpenShift(true)} style={{ width:"100%", padding:11, borderRadius:8, border:"none", background:T.amber, color:"#1a1a1a", fontWeight:800, fontSize:13, cursor:"pointer", fontFamily:T.font }}>Open Shift</button>
+                  </div>
+                )}
+                {openList.length===0 ? (
+                  <div style={{ textAlign:"center", color:T.textMuted, padding:"60px 0" }}>
+                    <div style={{ fontSize:30, marginBottom:8 }}>🧾</div>No bills awaiting payment
+                  </div>
+                ) : openList.map(inv => {
+                  const its = normalizeItems(inv.items);
+                  const ppl = [...new Set(its.map(i=>(i.note||"").match(/^\[([^\]]+)\]/)?.[1]).filter(p=>p&&p!=="null"&&p!=="undefined"))].join(", ");
+                  const isTk = /^take.?away$/i.test(String(inv.table||""));
+                  return (
+                    <button key={inv.id} onClick={()=>handleSelectInv(inv)} style={{
+                      width:"100%", textAlign:"left", background:T.surface, border:`1px solid ${T.border}`,
+                      borderLeft:`3px solid ${T.amber}`, borderRadius:12, padding:"13px 14px", marginBottom:10, cursor:"pointer", fontFamily:T.font,
+                    }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <span style={{ background:isTk?T.amber:T.error, color:"#fff", fontWeight:800, fontSize:12, padding:"3px 10px", borderRadius:6 }}>{isTk?"Takeaway":(inv.table||"—")}</span>
+                          {ppl && <span style={{ background:T.amber, color:"#fff", fontWeight:800, fontSize:11, padding:"2px 9px", borderRadius:10 }}>{ppl}</span>}
+                        </div>
+                        <span style={{ fontSize:16, fontWeight:800, color:T.amber, fontFamily:T.fontMono }}>{fmt(inv.finalTotal ?? inv.total)}</span>
+                      </div>
+                      <div style={{ fontSize:11, color:T.textMuted }}>
+                        INV-{inv.id} · {its.length} item{its.length!==1?"s":""} · {inv.waiter||"—"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ── PAY ── */}
+            {(step==="pay"||step==="confirm") && selectedInv && (() => {
+              const its = normalizeItems(selectedInv.items);
+              const ppl = [...new Set(its.map(i=>(i.note||"").match(/^\[([^\]]+)\]/)?.[1]).filter(p=>p&&p!=="null"&&p!=="undefined"))].join(", ");
+              const isTk = /^take.?away$/i.test(String(selectedInv.table||""));
+              return (
+                <>
+                  <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 110px" }}>
+                    {/* header */}
+                    <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+                      <button onClick={handleReset} style={{ width:38, height:38, borderRadius:10, border:`1px solid ${T.border}`, background:T.card, color:T.textSecondary, fontSize:20, cursor:"pointer", flexShrink:0 }}>‹</button>
+                      <div>
+                        <div style={{ fontSize:14, fontWeight:800, color:T.textPrimary }}>INV-{selectedInv.id}</div>
+                        <div style={{ fontSize:11, color:T.textMuted, marginTop:2, display:"flex", gap:8, alignItems:"center" }}>
+                          <span>{isTk?"Takeaway":`Table ${selectedInv.table||"—"}`}</span>
+                          {ppl && <span style={{ background:T.amber, color:"#fff", fontWeight:700, padding:"1px 8px", borderRadius:10 }}>{ppl}</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* total hero + items */}
+                    <div style={{ background:`linear-gradient(135deg, ${T.surface}, ${T.card})`, border:`1px solid ${T.amber}30`, borderRadius:12, padding:18, marginBottom:18 }}>
+                      {its.map((item,idx)=>(
+                        <div key={idx} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", borderBottom:`1px solid ${T.border}` }}>
+                          <span style={{ fontSize:12, color:T.textSecondary }}>{item.qty}× {item.name}</span>
+                          <span style={{ fontSize:12, fontWeight:600, color:T.textPrimary, fontFamily:T.fontMono }}>{fmt((item.price ?? item.unit_price ?? 0)*item.qty)}</span>
+                        </div>
+                      ))}
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingTop:14, marginTop:10, borderTop:`1px solid ${T.amber}25` }}>
+                        <span style={{ fontSize:10, fontWeight:800, color:T.amber, letterSpacing:1, textTransform:"uppercase" }}>Grand Total</span>
+                        <span style={{ fontSize:30, fontWeight:800, color:T.amber, fontFamily:T.fontMono, letterSpacing:-1, lineHeight:1 }}>{fmt(billTotal)}</span>
+                      </div>
+                    </div>
+
+                    {/* payment method */}
+                    <SectionLabel>Payment Method</SectionLabel>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
+                      <PayBtn label="Cash"   icon={Icon.Cash}  color={T.success} active={!splitEnabled && payMethod==="cash"}
+                        onClick={()=>{ setSplitEnabled(false); setPayMethod("cash"); setTendered(""); }} />
+                      <PayBtn label="M-Pesa" icon={Icon.Mpesa} color={T.mpesa}   active={!splitEnabled && payMethod==="mpesa"}
+                        onClick={()=>{ setSplitEnabled(false); setPayMethod("mpesa"); setMpesaPhone(""); setMpesaRef(""); setMpesaStatus("idle"); }} />
+                      <PayBtn label="Split"  icon={Icon.Split} color={T.amber}   active={splitEnabled}
+                        onClick={()=>{ setSplitEnabled(true); setPayMethod("cash"); setCashPart(""); setMpesaPart(""); setSplitPhone(""); setSplitRef(""); }} />
+                    </div>
+
+                    {/* CASH */}
+                    {!splitEnabled && payMethod==="cash" && (
+                      <div style={{ background:`${T.success}08`, border:`1px solid ${T.success}30`, borderRadius:10, padding:16, marginBottom:18 }}>
+                        <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
+                          {QUICK_CASH.map(v=>(
+                            <QuickCashBtn key={v} value={v} label={`${v}`} active={tendered===String(v)} onClick={()=>setTendered(String(v))} />
+                          ))}
+                          <QuickCashBtn value="exact" label="Exact" active={tendered===String(Math.round(billTotal))} onClick={()=>setTendered(String(Math.round(billTotal)))} />
+                        </div>
+                        <FieldLabel color={T.success}>Amount Received (KES)</FieldLabel>
+                        <input type="number" min={0} value={tendered} onChange={e=>setTendered(e.target.value)} placeholder={String(Math.round(billTotal))}
+                          style={{ ...inputBase(T.success), fontSize:18, fontWeight:700, fontFamily:T.fontMono, textAlign:"right" }} />
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:12, borderRadius:8, padding:"12px 16px",
+                          background: tenderedNum>0 ? (changeDue>=0?`${T.success}14`:`${T.error}14`) : T.bg,
+                          border:`1px solid ${tenderedNum>0 ? (changeDue>=0?`${T.success}40`:`${T.error}40`) : T.border}` }}>
+                          <span style={{ fontSize:10, fontWeight:700, color:T.textMuted, letterSpacing:0.5 }}>{changeDue<0 && tenderedNum>0?"SHORT BY":"CHANGE DUE"}</span>
+                          <span style={{ fontSize:18, fontWeight:800, fontFamily:T.fontMono, color: changeDue>=0?T.success:T.error }}>{fmt(Math.abs(changeDue))}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* M-PESA */}
+                    {!splitEnabled && payMethod==="mpesa" && (
+                      <div style={{ background:`${T.mpesa}08`, border:`1px solid ${T.mpesa}30`, borderRadius:10, padding:16, marginBottom:18 }}>
+                        <FieldLabel color={T.mpesa}>Customer Phone</FieldLabel>
+                        <input value={mpesaPhone} onChange={e=>setMpesaPhone(e.target.value)} placeholder="07XX XXX XXX" inputMode="numeric"
+                          style={{ ...inputBase(T.mpesa), marginBottom:12 }} />
+                        <button onClick={handleStkPush} disabled={mpesaPhone.replace(/\s/g,"").length<9 || mpesaStatus==="sending"}
+                          style={{ width:"100%", padding:12, borderRadius:8, border:"none", background:T.mpesa, color:"#fff", fontWeight:800, fontSize:13, marginBottom:12,
+                            cursor: mpesaPhone.replace(/\s/g,"").length<9?"not-allowed":"pointer", opacity: mpesaPhone.replace(/\s/g,"").length<9?0.5:1, fontFamily:T.font }}>
+                          {mpesaStatus==="sending"?"Sending…":"Send STK Push"}
+                        </button>
+                        <div style={{ fontSize:11, fontWeight:700, color:msc.color, background:msc.bg, borderRadius:7, padding:"9px 12px", textAlign:"center", marginBottom:12 }}>{msc.label}</div>
+                        <FieldLabel color={T.mpesa}>M-Pesa Code</FieldLabel>
+                        <input value={mpesaRef} onChange={e=>setMpesaRef(e.target.value.toUpperCase())} placeholder="e.g. SLJ7XXXX" style={{ ...inputBase(T.mpesa) }} />
+                      </div>
+                    )}
+
+                    {/* SPLIT */}
+                    {splitEnabled && (
+                      <div style={{ background:`${T.amber}08`, border:`1px solid ${T.amber}30`, borderRadius:10, padding:16, marginBottom:18 }}>
+                        <FieldLabel color={T.success}>Cash Part (KES)</FieldLabel>
+                        <input type="number" min={0} value={cashPart} onChange={e=>setCashPart(e.target.value)} placeholder="0"
+                          style={{ ...inputBase(T.success), marginBottom:12, fontFamily:T.fontMono, textAlign:"right" }} />
+                        <FieldLabel color={T.mpesa}>M-Pesa Part (KES)</FieldLabel>
+                        <input type="number" min={0} value={mpesaPart} onChange={e=>setMpesaPart(e.target.value)} placeholder="0"
+                          style={{ ...inputBase(T.mpesa), marginBottom:12, fontFamily:T.fontMono, textAlign:"right" }} />
+                        {mpesaPartNum>0 && (<>
+                          <FieldLabel color={T.mpesa}>M-Pesa Phone</FieldLabel>
+                          <input value={splitPhone} onChange={e=>setSplitPhone(e.target.value)} placeholder="07XX XXX XXX" inputMode="numeric" style={{ ...inputBase(T.mpesa), marginBottom:12 }} />
+                          <FieldLabel color={T.mpesa}>M-Pesa Code</FieldLabel>
+                          <input value={splitRef} onChange={e=>setSplitRef(e.target.value.toUpperCase())} placeholder="e.g. SLJ7XXXX" style={{ ...inputBase(T.mpesa), marginBottom:12 }} />
+                        </>)}
+                        <div style={{ display:"flex", justifyContent:"space-between", padding:"10px 14px", borderRadius:8, background:T.bg, border:`1px solid ${splitTotal>=billTotal?`${T.success}40`:T.border}` }}>
+                          <span style={{ fontSize:11, fontWeight:700, color:T.textMuted }}>Covered</span>
+                          <span style={{ fontSize:14, fontWeight:800, fontFamily:T.fontMono, color:splitTotal>=billTotal?T.success:T.textSecondary }}>{fmt(splitTotal)} / {fmt(billTotal)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* fixed confirm */}
+                  <div style={{ position:"absolute", left:0, right:0, bottom:0, padding:"14px 14px 18px", background:`linear-gradient(to top, ${T.bg} 75%, transparent)` }}>
+                    <button onClick={handleConfirmPayment} disabled={!canConfirm}
+                      style={{ width:"100%", padding:16, borderRadius:10, border:`1px solid ${canConfirm?T.amber:T.border}`,
+                        background: canConfirm?`linear-gradient(135deg, ${T.amber}, ${T.amber}cc)`:T.card, color:canConfirm?"#1a1a1a":T.textMuted,
+                        fontWeight:800, fontSize:15, cursor:canConfirm?"pointer":"not-allowed", fontFamily:T.font, letterSpacing:0.4 }}>
+                      {canConfirm?`Confirm Payment — ${fmt(billTotal)}`:"Complete payment details"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {/* ── DONE ── */}
+            {step==="done" && selectedInv && (
+              <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+                <div style={{ background:T.surface, border:`1px solid ${T.success}30`, borderRadius:14, padding:"36px 28px", textAlign:"center", width:"100%", maxWidth:380 }}>
+                  <div style={{ width:60, height:60, borderRadius:"50%", background:`${T.success}14`, border:`2px solid ${T.success}40`, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 18px", color:T.success }}><Icon.Check /></div>
+                  <div style={{ fontSize:19, fontWeight:800, color:T.success, marginBottom:4 }}>Payment Received</div>
+                  <div style={{ fontSize:11, color:T.textMuted, marginBottom:16 }}>INV-{selectedInv.id}</div>
+                  <div style={{ fontSize:32, fontWeight:800, color:T.amber, fontFamily:T.fontMono, marginBottom:8 }}>{fmt(selectedInv.finalTotal ?? selectedInv.total)}</div>
+                  <div style={{ fontSize:11, color:T.textSecondary, marginBottom:16, padding:"7px 14px", background:T.card, borderRadius:6, display:"inline-block" }}>
+                    {splitEnabled?`Split · Cash ${fmt(cashPartNum)} + M-Pesa ${fmt(mpesaPartNum)}`:payMethod==="mpesa"?`M-Pesa · ${formatPhone(mpesaPhone)}`:"Cash"}
+                  </div>
+                  {!splitEnabled && payMethod==="cash" && changeDue>0 && (
+                    <div style={{ fontSize:15, fontWeight:800, color:T.success, background:`${T.success}12`, border:`1px solid ${T.success}30`, borderRadius:8, padding:"10px 18px", marginBottom:16, fontFamily:T.fontMono }}>Change: {fmt(changeDue)}</div>
+                  )}
+                  <div style={{ display:"flex", gap:10, marginTop:6 }}>
+                    <button onClick={()=>setReceipt(openInvoices.find(i=>i.id===selectedInv.id) || selectedInv)} style={{ flex:1, padding:13, borderRadius:9, border:`1px solid ${T.border}`, background:T.card, color:T.textSecondary, cursor:"pointer", fontFamily:T.font, fontSize:13, fontWeight:700 }}>Receipt</button>
+                    <button onClick={()=>handleReset(selectedInv?.id)} style={{ flex:2, padding:13, borderRadius:9, border:`1px solid ${T.amber}60`, background:`${T.amber}14`, color:T.amber, cursor:"pointer", fontFamily:T.font, fontSize:14, fontWeight:800 }}>Next Customer</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* processing overlay */}
+            {processing && (
+              <div style={{ position:"absolute", inset:0, background:`${T.bg}CC`, display:"flex", alignItems:"center", justifyContent:"center", zIndex:50 }}>
+                <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:12, padding:"30px 44px", textAlign:"center" }}>
+                  <div style={{ color:T.amber, marginBottom:14, animation:"spin 1s linear infinite", display:"inline-block" }}><Icon.Spinner /></div>
+                  <div style={{ fontSize:14, fontWeight:700, color:T.textPrimary }}>Processing payment</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Receipt modal ────────────────────────────────────────────────── */}
         {/* Open shift directly from cashier screen */}

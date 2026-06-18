@@ -47,6 +47,24 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
       const fromList = (openInvoices || []).find(i => String(i.id) === String(p?.id));
       const tbl = p?.table_no || p?.table || fromList?.table || fromList?.table_no;
       setOpenInvoices(prev => prev.filter(i => String(i.id) !== String(p?.id)));
+      // The customer(s) on this paid bill have settled — clear their seats from the table
+      if (fromList && tbl) {
+        const paidPersons = [...new Set(parseItems(fromList.items)
+          .map(it => (it.note||"").match(/^\[([^\]]+)\]/)?.[1])
+          .filter(Boolean))];
+        if (paidPersons.length) {
+          setPersons(prev => {
+            const cur = prev[tbl] || [];
+            const upd = cur.filter(pid => !paidPersons.includes(pid));
+            return { ...prev, [tbl]: upd };
+          });
+          setCarts(prev => {
+            const n = { ...prev };
+            paidPersons.forEach(pid => { delete n[key(tbl, pid)]; });
+            return n;
+          });
+        }
+      }
       if (!tbl) return;
       setPaidTables(prev => ({ ...prev, [tbl]: true }));
       const ts = Date.now();
@@ -84,14 +102,13 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const [search,     setSearch]     = useState("");
   const [page,       setPage]       = useState(0);
   const [modal,      setModal]      = useState(null);
-  const [activeHold, setActiveHold] = useState(null);
+
   const [rightTab,   setRightTab]   = useState("menu");
   const { mobile } = useBreakpoint();
   const [mScreen, setMScreen] = useState("tables");  // mobile nav: tables|order|cart|ready|bills
   const [heldOrders, setHeldOrders] = useState([]);  // local only — never sent to backend
   const [addMoreTarget, setAddMoreTarget] = useState(null); // {hold, person, items}
   const [editHold,   setEditHold]   = useState(null);
-  const [openOrders, setOpenOrders] = useState({});         // { holdId: true/false } collapsed state
   const [noteTarget,   setNoteTarget]   = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null); // hold to cancel
   const [noteText,   setNoteText]   = useState("");
@@ -190,6 +207,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const [billTarget,    setBillTarget]    = useState(null);  // { table, persons:[{person,items,subtotal}] }
   const [customSel,     setCustomSel]     = useState([]);    // person ids ticked for the next bill
   const [composedBills, setComposedBills] = useState([]);    // [{ id, personIds, items, subtotal, total }]
+  const [billMode,      setBillMode]      = useState("separate"); // separate | together
   const [billBusy,      setBillBusy]      = useState(false);
   const [billErr,       setBillErr]       = useState("");
 
@@ -250,46 +268,50 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const openBill = (tbl) => {
     const persons = tablePersonsData(tbl);
     setBillTarget({ table: tbl, persons });
-    setComposedBills([]);          // SPLIT default — everyone starts unassigned
-    setCustomSel([]); setBillErr("");
+    setCustomSel([]);              // nobody ticked — waiter picks who to bill
+    setBillMode("separate");
+    setComposedBills([]);
+    setBillErr("");
   };
 
   const closeBill = () => {
-    setBillTarget(null); setComposedBills([]); setCustomSel([]);
+    setBillTarget(null); setComposedBills([]); setCustomSel([]); setBillMode("separate");
     setBillBusy(false); setBillErr("");
   };
 
-  const assignedIds = composedBills.flatMap(b => b.personIds);
-  const unassigned  = billTarget ? billTarget.persons.filter(p => !assignedIds.includes(p.person)) : [];
-
-  // Primary: group the ticked (still-unassigned) persons into one bill
-  const addCustomBill = () => {
-    const chosen = unassigned.filter(p => customSel.includes(p.person));
-    if (!chosen.length) return;
-    setComposedBills(b => [...b, mkBill(chosen)]);
-    setCustomSel([]);
+  // Recompute the bills from who's ticked + whether they pay separately or together
+  const recompose = (sel, mode, persons) => {
+    const list = persons || (billTarget ? billTarget.persons : []);
+    const chosen = list.filter(p => sel.includes(p.person));
+    setComposedBills(mode === "together"
+      ? (chosen.length ? [mkBill(chosen)] : [])
+      : chosen.map(p => mkBill([p])));
   };
-  const removeBill = (id) => setComposedBills(b => b.filter(x => x.id !== id));
 
-  // Secondary shortcuts
-  const billWholeTable     = () => { setComposedBills([ mkBill(billTarget.persons) ]); setCustomSel([]); };
-  const billEachSeparately = () => { setComposedBills(billTarget.persons.map(p => mkBill([p]))); setCustomSel([]); };
+  const toggleBillPerson = (pid) => {
+    const next = customSel.includes(pid) ? customSel.filter(x => x !== pid) : [...customSel, pid];
+    setCustomSel(next);
+    recompose(next, billMode);
+  };
+
+  const setBillModeAnd = (mode) => { setBillMode(mode); recompose(customSel, mode); };
+
+  const unassigned = billTarget ? billTarget.persons.filter(p => !customSel.includes(p.person)) : [];
 
   const finishBilling = async () => {
     if (!billTarget || billBusy || composedBills.length===0) return;
     setBillBusy(true); setBillErr("");
     const tbl = billTarget.table;
-    const billedPersons = new Set(composedBills.flatMap(b => b.personIds));
     const billedHoldIds = new Set(composedBills.flatMap(b => b.holdIds || []));
     const invoiceIds = [];
     try {
       const { posApi } = await import("../api/index.js");
       for (const bill of composedBills) {
         const inv = await posApi.createInvoice({
-          table_no: tbl==="TAKEAWAY" ? null : tbl,
+          table_no: tbl,
           items:    bill.items,
           total:    bill.total,
-          notes:    bill.personIds.join("+") + " — Table " + tbl,
+          notes:    bill.personIds.join("+") + " — " + (tbl==="TAKEAWAY" ? "Takeaway" : "Table " + tbl),
           source_hold_ids: bill.holdIds,
         });
         if (inv?.id) {
@@ -394,7 +416,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     const mc = category==="all"?true:category==="bestseller"?item.bestseller:item.category===category;
     return mc && item.name.toLowerCase().includes(search.toLowerCase());
   });
-  const totalPages = Math.ceil(filtered.length / PER_PAGE);
   const pageItems  = filtered.slice(page*PER_PAGE, (page+1)*PER_PAGE);
 
   // ── actions ───────────────────────────────────────────────────────────────────
@@ -510,73 +531,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     } catch(e) { console.error("Add to kitchen failed:", e); }
   };
 
-  const handleBill = async hold => {
-    const hItems = Array.isArray(hold.items) ? hold.items
-      : (()=>{try{return JSON.parse(hold.items||"[]")}catch{return []}})();
-    const sub   = hItems.reduce((s,i)=>s+i.price*i.qty, 0);
-    const tax   = sub * TAX;
-    const svc   = sub * SVC;
-    const total = sub + tax + svc;
-
-    // 1. Print receipt directly to Xprinter XP-58 via network
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      console.error("No token — please log in again");
-    } else {
-      try {
-        const { posApi } = await import("../api/index.js");
-        await posApi.printHold(String(hold.id), hold._person || null);
-        console.log("✅ Receipt printed to Xprinter XP-58");
-      } catch(printErr) {
-        console.error("❌ Print failed:", printErr.response?.data || printErr.message);
-        // Fallback — open PDF in browser if printer unreachable
-        const BASE   = import.meta.env.VITE_API_URL || "http://localhost:3001";
-        const person = hold._person ? `&person=${encodeURIComponent(hold._person)}` : "";
-        window.open(`${BASE}/api/pos/holds/${hold.id}/prebill?token=${token}${person}`, "_blank");
-      }
-    }
-
-    // 2. Send invoice to cashier
-    const inv = {
-      id:          "INV-"+String(Date.now()).slice(-6),
-      holdId:      hold.id,
-      _person:     hold._person || null,
-      table:       hold.table,
-      waiter:      hold.waiter || user.name,
-      items:       hItems,
-      subtotal:    sub, tax, service: svc, total,
-      status:      "open",
-      createdAt:   new Date().toISOString(),
-      createdTime: new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),
-    };
-
-    setOpenInvoices(p => [inv, ...p]);
-    setHoldList(p => p.map(h => String(h.id)===String(hold.id)
-      ? {...h, status:"billed", invoiceId:inv.id} : h
-    ));
-    setActiveHold(null);
-    setModal("bill_sent");
-    setTimeout(() => setModal(null), 2500);
-
-    try {
-      const { posApi } = await import("../api/index.js");
-      await posApi.updateHold(String(hold.id), { status:"billed" });
-      const saved = await posApi.createInvoice({
-        hold_id:  hold.id,
-        table_no: hold.table,
-        items:    hItems,
-        total,
-        notes:    (hold._person ? hold._person + " — " : "") + "Table " + hold.table,
-      });
-      // Replace local fake id with real DB id so socket dedup works correctly
-      if (saved?.id) {
-        setOpenInvoices(p => p.map(i =>
-          i.id === inv.id ? { ...i, id: saved.id } : i
-        ));
-      }
-    } catch(e) { console.error("Receipt error:", e.response?.data || e.message); }
-  };
-
   // ── render ────────────────────────────────────────────────────────────────────
   return (
     <div style={{flex:1,display:"flex",flexDirection:mobile?"column":"row",overflow:"hidden",background:T.bg,fontFamily:T.font,color:T.textPrimary}}>
@@ -674,7 +628,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 return hItems.filter(i=>{ const m=(i.note||"").match(/^\[([^\]]+)\]/); return m?m[1]===p:p==="P1"; });
               });
               const sentCount = sentItems.reduce((s,i)=>s+i.qty,0);
-              const hasItems  = cartCount>0||sentCount>0;
 
               return (
                 <button key={p} onClick={()=>setPerson(p)} style={{
@@ -724,7 +677,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 </button>
               );
             })}
-
 
           </div>
         </div>
@@ -1460,76 +1412,58 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 }}>×</button>
               </div>
             </div>
-            <div style={{fontSize:11,color:T.textMuted,marginBottom:14}}>Tap people to group them, then add as a bill</div>
+            <div style={{fontSize:11,color:T.textMuted,marginBottom:14}}>Tick who to bill now. Anyone unticked stays open in Ready.</div>
 
-            {/* Person picker (still-unassigned persons) */}
-            {unassigned.length>0?(
-              <div style={{marginBottom:12}}>
-                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
-                  {unassigned.map(p=>{
-                    const on=customSel.includes(p.person);
-                    return (
-                      <button key={p.person} onClick={()=>setCustomSel(s=>on?s.filter(x=>x!==p.person):[...s,p.person])} style={{
-                        display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"9px 12px",borderRadius:8,cursor:"pointer",fontFamily:T.font,
-                        border:"1px solid "+(on?T.amber:T.border),background:on?T.amber+"18":T.card,
-                      }}>
-                        <span style={{fontSize:12,fontWeight:700,color:on?T.amber:T.textPrimary}}>{on?"☑":"☐"} {p.person}</span>
-                        <span style={{fontSize:12,fontWeight:700,color:T.textSecondary}}>{fmt(p.subtotal*(1+TAX+SVC))}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <button onClick={addCustomBill} disabled={!customSel.length} style={{
-                  width:"100%",padding:"9px",borderRadius:8,border:"1px dashed "+T.amber,
-                  background:"transparent",color:T.amber,fontWeight:700,fontSize:12,fontFamily:T.font,
-                  cursor:customSel.length?"pointer":"not-allowed",opacity:customSel.length?1:0.5,
-                }}>+ Add {customSel.length?customSel.length+" ":""}as a bill</button>
+            {/* Who to bill */}
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+              {billTarget.persons.map(p=>{
+                const on=customSel.includes(p.person);
+                return (
+                  <button key={p.person} onClick={()=>toggleBillPerson(p.person)} style={{
+                    display:"flex",justifyContent:"space-between",alignItems:"center",
+                    padding:"10px 12px",borderRadius:8,cursor:"pointer",fontFamily:T.font,
+                    border:"1px solid "+(on?T.green:T.border),background:on?T.green+"15":T.card,
+                  }}>
+                    <span style={{fontSize:13,fontWeight:700,color:on?T.green:T.textMuted}}>{on?"☑":"☐"} {p.person}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:T.textSecondary}}>{fmt(p.subtotal*(1+TAX+SVC))}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-                {/* Secondary shortcuts */}
-                <div style={{display:"flex",gap:8,marginTop:10}}>
-                  <button onClick={billWholeTable} style={{
-                    flex:1,padding:"7px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,
-                    border:"1px solid "+T.border,background:"transparent",color:T.textSecondary,
-                  }}>Whole table together</button>
-                  <button onClick={billEachSeparately} style={{
-                    flex:1,padding:"7px",borderRadius:7,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,
-                    border:"1px solid "+T.border,background:"transparent",color:T.textSecondary,
-                  }}>Each pays own</button>
-                </div>
+            {/* How the ticked people pay — only matters when 2+ are ticked */}
+            {customSel.length>=2 && (
+              <div style={{display:"flex",gap:8,marginBottom:14}}>
+                <button onClick={()=>setBillModeAnd("separate")} style={{
+                  flex:1,padding:"9px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:T.font,
+                  border:"1px solid "+(billMode==="separate"?T.amber:T.border),
+                  background:billMode==="separate"?T.amber+"18":"transparent",color:billMode==="separate"?T.amber:T.textSecondary,
+                }}>Separate bills</button>
+                <button onClick={()=>setBillModeAnd("together")} style={{
+                  flex:1,padding:"9px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:T.font,
+                  border:"1px solid "+(billMode==="together"?T.amber:T.border),
+                  background:billMode==="together"?T.amber+"18":"transparent",color:billMode==="together"?T.amber:T.textSecondary,
+                }}>One bill together</button>
               </div>
-            ):(
-              <div style={{fontSize:11,color:T.green,fontWeight:700,padding:"4px 0 12px"}}>✓ Everyone is on a bill</div>
             )}
 
-            {/* Composed bills preview */}
+            {/* Preview */}
             <div style={{flex:1,overflowY:"auto",marginBottom:14,borderTop:"1px solid "+T.border,paddingTop:12}}>
               <div style={{fontSize:11,fontWeight:700,color:T.textSecondary,marginBottom:8}}>
-                {composedBills.length} bill{composedBills.length!==1?"s":""} to send
+                {composedBills.length===0?"Nothing selected":composedBills.length+" bill"+(composedBills.length!==1?"s":"")+" to send"}
               </div>
-              {composedBills.length===0&&(
-                <div style={{fontSize:11,color:T.textMuted,fontStyle:"italic"}}>No bills yet — group people above</div>
-              )}
-              {composedBills.map((b,i)=>(
+              {composedBills.map((b)=>(
                 <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",marginBottom:6}}>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:700,color:T.textPrimary}}>Bill {i+1} · {b.personIds.join(", ")}</div>
-                    <div style={{fontSize:10,color:T.textMuted}}>{b.items.reduce((a,it)=>a+it.qty,0)} item(s)</div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:13,fontWeight:800,color:T.amber}}>{fmt(b.total)}</span>
-                    <button onClick={()=>removeBill(b.id)} style={{border:"none",background:"none",color:T.red,cursor:"pointer",fontSize:16,fontWeight:700}}>×</button>
-                  </div>
+                  <div style={{fontSize:12,fontWeight:700,color:T.textPrimary}}>{b.personIds.join(" + ")}{b.personIds.length>1?" (together)":""}</div>
+                  <span style={{fontSize:13,fontWeight:800,color:T.amber}}>{fmt(b.total)}</span>
                 </div>
               ))}
+              {unassigned.length>0 && composedBills.length>0 && (
+                <div style={{fontSize:11,color:T.textMuted,marginTop:8}}>{unassigned.map(p=>p.person).join(", ")} stays open in Ready</div>
+              )}
             </div>
 
             {billErr&&<div style={{fontSize:11,color:T.red,marginBottom:10}}>{billErr}</div>}
-            {composedBills.length>0&&unassigned.length>0&&(
-              <div style={{fontSize:11,color:T.textMuted,marginBottom:10}}>
-                {unassigned.map(p=>p.person).join(", ")} stay open in Ready
-              </div>
-            )}
 
             {/* Actions */}
             <div style={{display:"flex",gap:8}}>
@@ -1685,7 +1619,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
       )}
 
       {/* ── Confirm Bill Modal ── */}
-
 
       {/* ── Add More Modal ── */}
       {addMoreTarget&&(
