@@ -18,7 +18,10 @@ const CONSUMABLES = [
   { key:"charcoal", label:"Charcoal",           hint:"Cost per bag",      unit:"bag" },
 ];
 
-export default function OverheadSettings({ onBack }) {
+export default function OverheadSettings({ onBack, mode = "all" }) {
+  const showFixed       = mode === "overheads" || mode === "all";
+  const showConsumables = mode === "utilities" || mode === "all";
+  const showStaff       = mode === "overheads" || mode === "all";
   const [fixed,       setFixed]       = useState({});
   const [consumables, setConsumables] = useState({});
   const [staff,       setStaff]       = useState([{ name: "", salary: "" }]);
@@ -81,16 +84,25 @@ export default function OverheadSettings({ onBack }) {
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:24 }}>
         {onBack && <button onClick={onBack} style={{ border:`1px solid ${BORDER}`, background:"#FFF", borderRadius:6, padding:"6px 14px", fontSize:12, cursor:"pointer" }}>← Back</button>}
         <div>
-          <div style={{ fontSize:16, fontWeight:700, color:"#111827" }}>Overhead & Utilities</div>
-          <div style={{ fontSize:12, color:MUTED }}>Set costs once — system auto-deducts from daily profit</div>
+          <div style={{ fontSize:16, fontWeight:700, color:"#111827" }}>
+            {mode === "utilities" ? "Utilities" : mode === "overheads" ? "Overheads" : "Overhead & Utilities"}
+          </div>
+          <div style={{ fontSize:12, color:MUTED }}>
+            {mode === "utilities"
+              ? "Cooking gas, firewood & charcoal — daily running cost"
+              : mode === "overheads"
+                ? "Fixed monthly bills & staff salaries — daily cost"
+                : "Set costs once — system auto-deducts from daily profit"}
+          </div>
         </div>
       </div>
 
       {error && <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:6, fontSize:12, color:"#DC2626", marginBottom:16 }}>{error}</div>}
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, maxWidth:900 }}>
+      <div style={{ display:"grid", gridTemplateColumns: (showFixed && showConsumables) ? "1fr 1fr" : "1fr", gap:20, maxWidth:900 }}>
 
         {/* Fixed Monthly */}
+        {showFixed && (
         <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:20 }}>
           <div style={{ fontSize:12, fontWeight:700, color:B, letterSpacing:1, textTransform:"uppercase", marginBottom:16, paddingBottom:8, borderBottom:`1px solid ${BORDER}` }}>Fixed Monthly Bills</div>
           <div style={{ fontSize:11, color:MUTED, marginBottom:14 }}>Enter monthly amount — system divides by 30 for daily cost</div>
@@ -111,8 +123,10 @@ export default function OverheadSettings({ onBack }) {
             </div>
           </div>
         </div>
+        )}
 
         {/* Consumables */}
+        {showConsumables && (
         <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:20 }}>
           <div style={{ fontSize:12, fontWeight:700, color:B, letterSpacing:1, textTransform:"uppercase", marginBottom:16, paddingBottom:8, borderBottom:`1px solid ${BORDER}` }}>Consumables</div>
           <div style={{ fontSize:11, color:MUTED, marginBottom:14 }}>Enter cost and how many days it lasts</div>
@@ -146,9 +160,11 @@ export default function OverheadSettings({ onBack }) {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Staff Salaries */}
+      {showStaff && (
       <div style={{ maxWidth:900, marginTop:20, background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:20 }}>
         <div style={{ fontSize:12, fontWeight:700, color:B, letterSpacing:1, textTransform:"uppercase", marginBottom:16, paddingBottom:8, borderBottom:`1px solid ${BORDER}` }}>Staff Salaries</div>
         <div style={{ fontSize:11, color:MUTED, marginBottom:14 }}>Enter each employee name and monthly salary — system divides by 30 for daily cost</div>
@@ -169,19 +185,22 @@ export default function OverheadSettings({ onBack }) {
           <span style={{ fontWeight:700, color:G, fontSize:13 }}>KES {staffDaily.toFixed(0)}/day · KES {staffTotal.toLocaleString()}/month · {staff.filter(e=>e.name).length} staff</span>
         </div>
       </div>
+      )}
 
       {/* Total Summary */}
       <div style={{ maxWidth:900, marginTop:16, padding:"16px 20px", background:B, borderRadius:8, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div>
-          <div style={{ fontSize:12, color:"rgba(255,255,255,0.6)", marginBottom:2 }}>Total Daily Overhead</div>
+          <div style={{ fontSize:12, color:"rgba(255,255,255,0.6)", marginBottom:2 }}>
+            {mode === "utilities" ? "Total Daily Utilities" : "Total Daily Overhead"}
+          </div>
           <div style={{ fontSize:11, color:"rgba(255,255,255,0.4)" }}>Auto-deducted from daily revenue to show true profit</div>
         </div>
-        <div style={{ fontSize:28, fontWeight:800, color:"#fff" }}>KES {totalDaily.toFixed(0)}<span style={{ fontSize:14, fontWeight:400, color:"rgba(255,255,255,0.6)" }}>/day</span></div>
+        <div style={{ fontSize:28, fontWeight:800, color:"#fff" }}>KES {(mode === "utilities" ? consumableDaily : mode === "overheads" ? (fixedDaily + staffDaily) : totalDaily).toFixed(0)}<span style={{ fontSize:14, fontWeight:400, color:"rgba(255,255,255,0.6)" }}>/day</span></div>
       </div>
 
       <div style={{ maxWidth:900, marginTop:16 }}>
         <button onClick={save} disabled={saving} style={{ padding:"12px 32px", borderRadius:6, border:"none", background: saved ? G : saving ? "#9CA3AF" : B, color:"#FFF", fontWeight:600, fontSize:14, cursor: saving ? "default" : "pointer" }}>
-          {saved ? "✓ Saved" : saving ? "Saving..." : "Save Overhead Settings"}
+          {saved ? "✓ Saved" : saving ? "Saving..." : (mode === "utilities" ? "Save Utilities" : mode === "overheads" ? "Save Overheads" : "Save Overhead Settings")}
         </button>
       </div>
     </div>

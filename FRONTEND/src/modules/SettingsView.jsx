@@ -17,7 +17,8 @@ const NAV_ITEMS = [
   { id: "receipt",   label: "Receipt & Printing", symbol: "-", roles: ["admin", "manager"] },
   { id: "reports",   label: "Reports Settings",   symbol: "-", roles: ["admin", "manager"] },
   { id: "system",    label: "System Controls",    symbol: "-", roles: ["admin"] },
-  { id: "overhead",  label: "Overhead & Utilities", symbol: "-", roles: ["admin", "manager"], permission: "can_edit_overhead" },
+  { id: "utilities", label: "Utilities",          symbol: "-", roles: ["admin", "manager"] },
+  { id: "overheads", label: "Overheads",          symbol: "-", roles: ["admin"] },
   { id: "audit",     label: "Audit Logs",         symbol: "-", roles: ["admin"] },
 ];
 
@@ -43,7 +44,8 @@ export default function SettingsView({ user, users, setUsers, ingredients = [] }
       case "reports":     return <ReportsSettings {...props} />;
       case "system":      return <SystemControls {...props} />;
       case "audit":       return <AuditLogs {...props} />;
-      case "overhead":    return <OverheadSettings onBack={() => setActiveSection("business")} />;
+      case "utilities":   return <OverheadSettings mode="utilities" onBack={() => setActiveSection("business")} />;
+      case "overheads":   return <OverheadSettings mode="overheads" onBack={() => setActiveSection("business")} />;
       default:            return null;
     }
   };
@@ -154,44 +156,6 @@ export default function SettingsView({ user, users, setUsers, ingredients = [] }
             );
           })}
         </nav>
-
-        {/* User info at bottom */}
-        <div style={{ 
-          padding: "14px 16px", 
-          borderTop: `1px solid ${C.border}`, 
-          background: C.surfaceAlt,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 36,
-              height: 36,
-              borderRadius: 6,
-              background: `${C.primary}15`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 14,
-              fontWeight: 600,
-              color: C.primary,
-            }}>
-              {user.avatar || "-"}
-            </div>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.textPrimary, letterSpacing: "0.3px" }}>
-                {user.name.split(" ")[0]}
-              </div>
-              <div style={{ 
-                fontSize: 9, 
-                color: C.textMuted, 
-                textTransform: "uppercase",
-                letterSpacing: "0.5px",
-                marginTop: 2,
-              }}>
-                {user.role}
-              </div>
-            </div>
-          </div>
-        </div>
       </aside>
 
       {/* Main content area */}

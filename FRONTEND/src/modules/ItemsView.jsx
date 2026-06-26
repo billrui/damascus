@@ -913,7 +913,7 @@ function DeleteConfirmModal({ item, onClose, onConfirm }) {
 // Merges Item List + Item Stock into one view.
 // Columns: Code - Name - Category - Unit - Stock - Reorder - Cost - Retail - Status - Action
 // Actions: Add Stock - Update Price - Edit - Profile - Delete
-function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewItem, onNavigate }) {
+function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewItem, onNavigate, isAdmin }) {
   const [search,      setSearch]      = useState("");
   const [filterCat,   setFilterCat]   = useState("all");
   const [pageSize,    setPageSize]    = useState(25);
@@ -975,10 +975,12 @@ function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewIt
         <span style={{ fontSize:15, fontWeight:700, color:"#1A1A1A" }}>Items</span>
         <span style={{ fontSize:11, color:"#9CA3AF" }}>{filtered.length} item{filtered.length!==1?"s":""}</span>
         <div style={{ flex:1 }} />
+        {isAdmin && (
         <button onClick={() => onNavigate?.("overheads")}
           style={{ padding:"7px 14px", background:"#FFF", color:"#4A4A4A", border:"1px solid #E5E0D5", borderRadius:4, fontWeight:600, fontSize:11, cursor:"pointer" }}>
           ⚙ Overheads
         </button>
+        )}
         <button onClick={onNewItem}
           style={{ padding:"7px 14px", background:"#C5A059", color:"#fff", border:"none", borderRadius:4, fontWeight:600, fontSize:11, cursor:"pointer" }}>
           + New Item
@@ -1216,10 +1218,11 @@ export default function ItemsView({ subView: propSubView = "new", batches, setBa
           ingredients={propIngredients||[]}
           onNewItem={() => onNavigate?.("items:new")}
           onNavigate={navigate}
+          isAdmin={user?.role === "admin"}
         />
       )}
       {subView === "produce"    && <ProductionScreen   onBack={() => { setLocalSubView(null); onNavigate?.("items:list"); }} />}
-      {subView === "overheads"  && <OverheadSettings   onBack={() => { setLocalSubView(null); onNavigate?.("items:list"); }} />}
+      {subView === "overheads"  && <OverheadSettings   mode="overheads" onBack={() => { setLocalSubView(null); onNavigate?.("items:list"); }} />}
       {subView === "issue"   && <IssueStockView   batches={batches} setBatches={setBatches} storeIssues={storeIssues} setStoreIssues={setStoreIssues} user={user} />}
     </div>
   );
