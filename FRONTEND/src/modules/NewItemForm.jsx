@@ -3,8 +3,16 @@ import { itemsApi, inventoryApi, settingsApi } from "../api";
 
 const CATEGORIES = ["Beverages","Food","Breakfast","Starters","Mains","Desserts","Specials","Snacks","By-Order"];
 
+const newRow = (inv) => ({
+  _id: (crypto.randomUUID?.() || String(Math.random())),
+  ingredientId: inv?.id || "",
+  name: inv?.name || "",
+  unit: inv?.unit || "",
+  qty: "",
+});
+
 const fi = {
-  border:"1px solid #E5E0D5", borderRadius:4, padding:"8px 12px",
+  border:"1px solid #E5E0D5", borderRadius:6, padding:"9px 12px",
   fontSize:13, outline:"none", background:"#FFFFFF",
   width:"100%", boxSizing:"border-box", fontFamily:"'Inter',sans-serif",
   color:"#1A1A1A",
@@ -23,9 +31,10 @@ function Field({ label, required, hint, error, children }) {
   );
 }
 
-function IngredientRow({ row, index, inventory, onChange, onRemove }) {
+// Search bar to add an ingredient to the recipe (one place to add, not per-row).
+function AddIngredientSearch({ inventory, chosenIds, onAdd }) {
+  const [query, setQuery] = useState("");
   const [open, setOpen]   = useState(false);
-  const [query, setQuery] = useState(row.name || "");
   const ref               = useRef(null);
 
   useEffect(() => {
@@ -35,92 +44,99 @@ function IngredientRow({ row, index, inventory, onChange, onRemove }) {
   }, []);
 
   const matches = inventory
+    .filter(i => !chosenIds.includes(i.id))
     .filter(i => i.name.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 8);
 
-  const pick = (inv) => {
-    onChange(index, { ...row, ingredientId: inv.id, name: inv.name, unit: inv.unit });
-    setQuery(inv.name);
-    setOpen(false);
-  };
-
-  const linked    = !!row.ingredientId;
-  const invItem   = inventory.find(i => i.id === row.ingredientId);
-  const lineTotal = (parseFloat(row.qty) || 0) * (invItem?.costPerUnit || 0);
-  const isUtil    = invItem?.category === "Utilities";
+  const choose = (inv) => { onAdd(inv); setQuery(""); setOpen(false); };
 
   return (
-    <div style={{
-      display:"grid", gridTemplateColumns:"1fr 90px 90px 80px 28px",
-      gap:6, alignItems:"center",
-      background: isUtil ? "#FFFBEB" : linked ? "#F0FDF4" : "#F8F8F8",
-      border: `1px solid ${isUtil ? "#FDE68A" : linked ? "#86EFAC" : "#E5E0D5"}`,
-      borderRadius:6, padding:"8px 10px", marginBottom:6,
-    }}>
-      {/* Ingredient search */}
-      <div ref={ref} style={{ position:"relative" }}>
+    <div ref={ref} style={{ position:"relative", marginBottom:12 }}>
+      <div style={{ position:"relative" }}>
+        <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"#C5A059", fontSize:14 }}>⌕</span>
         <input
           value={query}
-          onChange={e => { setQuery(e.target.value); onChange(index, { ...row, ingredientId:"", name: e.target.value }); setOpen(true); }}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          placeholder="Search ingredient or utility..."
-          style={{ ...fi, padding:"6px 10px", fontSize:12,
-            borderColor: isUtil ? "#FDE68A" : linked ? "#86EFAC" : "#E5E0D5",
-            paddingRight: linked ? 24 : 10 }}
+          placeholder="Search an ingredient to add..."
+          style={{ ...fi, paddingLeft:34, borderColor:"#E5E0D5", background:"#FEFCF8" }}
         />
-        {linked && <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", color: isUtil ? "#B8860B" : "#16A34A", fontSize:11, fontWeight:700 }}>{isUtil ? "⚡" : "✓"}</span>}
-        {open && matches.length > 0 && (
-          <div style={{ position:"absolute", top:"100%", left:0, right:0, background:"#FFF", border:"1px solid #C5A059", borderRadius:4, zIndex:999, boxShadow:"0 4px 12px rgba(0,0,0,0.12)", maxHeight:200, overflowY:"auto" }}>
-            {matches.map(inv => (
-              <div key={inv.id} onMouseDown={() => pick(inv)}
-                style={{ padding:"8px 12px", cursor:"pointer", borderBottom:"1px solid #F5F5F5",
-                  background: inv.category === "Utilities" ? "#FFFBEB" : "#FFF" }}
-                onMouseEnter={e => e.currentTarget.style.opacity="0.8"}
-                onMouseLeave={e => e.currentTarget.style.opacity="1"}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>{inv.name}</div>
-                  {inv.category === "Utilities" && <span style={{ fontSize:9, background:"#FDE68A", color:"#92400E", padding:"1px 6px", borderRadius:3, fontWeight:600 }}>UTILITY</span>}
-                </div>
-                <div style={{ fontSize:10, color:"#7A7A7A" }}>{inv.unit} · KES {inv.costPerUnit}/unit · stock: {inv.qty ?? "?"}</div>
+      </div>
+      {open && matches.length > 0 && (
+        <div style={{ position:"absolute", top:"100%", left:0, right:0, marginTop:4, background:"#FFF", border:"1px solid #E5E0D5", borderRadius:8, zIndex:999, boxShadow:"0 8px 24px rgba(0,0,0,0.10)", maxHeight:240, overflowY:"auto", padding:4 }}>
+          {matches.map(inv => (
+            <div key={inv.id} onMouseDown={() => choose(inv)}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", cursor:"pointer", borderRadius:6 }}
+              onMouseEnter={e => e.currentTarget.style.background="#FEF9F0"}
+              onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+              <div style={{ width:30, height:30, borderRadius:"50%", background:"#F0FDF4", border:"1px solid #86EFAC", color:"#16A34A", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 }}>
+                {(inv.name||"?").charAt(0).toUpperCase()}
               </div>
-            ))}
-          </div>
-        )}
-        {open && query.length > 0 && matches.length === 0 && (
-          <div style={{ position:"absolute", top:"100%", left:0, right:0, background:"#FFFBEB", border:"1px solid #FEF3C7", borderRadius:4, zIndex:999, padding:"8px 12px", fontSize:11, color:"#B8860B" }}>
-            Not found — add to Inventory first (use category "Utilities" for water, gas, charcoal)
-          </div>
-        )}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12.5, fontWeight:600, color:"#1A1A1A", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{inv.name}</div>
+                <div style={{ fontSize:10, color:"#9CA3AF" }}>in stock: {Math.round(inv.qty ?? 0)} {inv.unit} · KES {Math.round(inv.costPerUnit)}/{inv.unit}</div>
+              </div>
+              <span style={{ fontSize:11, color:"#C5A059", fontWeight:700 }}>+ Add</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && query.length > 0 && matches.length === 0 && (
+        <div style={{ position:"absolute", top:"100%", left:0, right:0, marginTop:4, background:"#FFFBEB", border:"1px solid #FEF3C7", borderRadius:8, zIndex:999, padding:"10px 12px", fontSize:11, color:"#B8860B" }}>
+          No match. Add it under Ingredients first.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One linked ingredient, shown as a tidy card.
+function IngredientCard({ row, index, invItem, onChange, onRemove }) {
+  const cost = (parseFloat(row.qty) || 0) * (invItem?.costPerUnit || 0);
+  const stock = Math.round(invItem?.qty ?? 0);
+  const over  = (parseFloat(row.qty) || 0) > stock && stock >= 0 && row.qty !== "";
+  return (
+    <div style={{
+      display:"flex", alignItems:"center", gap:12,
+      background:"#FFF", border:"1px solid #EFE9DD", borderRadius:10,
+      padding:"10px 12px", marginBottom:8,
+    }}>
+      {/* Avatar */}
+      <div style={{ width:38, height:38, borderRadius:"50%", background:"#F0FDF4", border:"1px solid #86EFAC", color:"#16A34A", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:700, flexShrink:0 }}>
+        {(row.name||"?").charAt(0).toUpperCase()}
       </div>
 
-      {/* Qty */}
-      <input
-        type="number" min="0" step="0.001"
-        value={row.qty}
-        onChange={e => onChange(index, { ...row, qty: e.target.value })}
-        placeholder={"qty (" + (row.unit || "unit") + ")"}
-        style={{ ...fi, padding:"6px 10px", fontSize:12, textAlign:"right" }}
-      />
+      {/* Name + stock */}
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13, fontWeight:600, color:"#1A1A1A", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{row.name}</div>
+        <div style={{ fontSize:10.5, color:"#9CA3AF" }}>
+          in stock: {stock} {row.unit} · KES {Math.round(invItem?.costPerUnit || 0)}/{row.unit}
+        </div>
+      </div>
 
-      {/* Overhead cost per serving */}
-      <input
-        type="number" min="0" step="0.01"
-        value={row.overheadCost || ""}
-        onChange={e => onChange(index, { ...row, overheadCost: e.target.value })}
-        placeholder="overhead KES"
-        title="Extra fixed cost per serving (water, gas, firewood)"
-        style={{ ...fi, padding:"6px 10px", fontSize:12, textAlign:"right",
-          background: row.overheadCost ? "#FFFBEB" : "#FFF",
-          borderColor: row.overheadCost ? "#FDE68A" : "#E5E0D5" }}
-      />
+      {/* Qty with unit suffix */}
+      <div style={{ position:"relative", width:118, flexShrink:0 }}>
+        <input
+          type="number" min="0" step="0.001" value={row.qty}
+          onChange={e => onChange(index, { qty: e.target.value })}
+          placeholder="0"
+          style={{ ...fi, padding:"7px 38px 7px 10px", fontSize:13, textAlign:"right",
+            borderColor: over ? "#FCA5A5" : "#E5E0D5" }}
+        />
+        <span style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", fontSize:11, color:"#9CA3AF", fontWeight:600, pointerEvents:"none" }}>{row.unit || "qty"}</span>
+      </div>
 
       {/* Line cost */}
-      <div style={{ fontSize:11, color: lineTotal > 0 ? "#2E7D64" : "#9CA3AF", textAlign:"right", fontWeight:500 }}>
-        {lineTotal > 0 ? "KES " + lineTotal.toFixed(2) : "—"}
+      <div style={{ width:72, textAlign:"right", flexShrink:0 }}>
+        <div style={{ fontSize:12.5, fontWeight:600, color: cost > 0 ? "#2E7D64" : "#C7C2B6" }}>{cost > 0 ? "KES " + Math.round(cost) : "—"}</div>
+        <div style={{ fontSize:9, color:"#B0A99A", textTransform:"uppercase", letterSpacing:0.4 }}>per batch</div>
       </div>
 
-      <button onClick={() => onRemove(index)}
-        style={{ width:28, height:28, border:"none", borderRadius:4, background:"#FEF2F2", color:"#8B3A3A", cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+      {/* Remove */}
+      <button onClick={() => onRemove(index)} title="Remove" aria-label="Remove ingredient"
+        style={{ width:28, height:28, border:"none", borderRadius:6, background:"transparent", color:"#C7C2B6", cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}
+        onMouseEnter={e => { e.currentTarget.style.background="#FEF2F2"; e.currentTarget.style.color="#DC2626"; }}
+        onMouseLeave={e => { e.currentTarget.style.background="transparent"; e.currentTarget.style.color="#C7C2B6"; }}>×</button>
     </div>
   );
 }
@@ -132,7 +148,7 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
   const [description, setDescription] = useState("");
   const [bestseller,  setBestseller]  = useState(false);
   const [batchSize,   setBatchSize]   = useState(1);
-  const [recipe,      setRecipe]      = useState([{ ingredientId:"", name:"", qty:"", unit:"", overheadCost:"" }]);
+  const [recipe,      setRecipe]      = useState([]);
   const [inventory,   setInventory]   = useState(liveIngredients);
   const [dailyOH,     setDailyOH]     = useState(0);
   const [saving,      setSaving]      = useState(false);
@@ -159,28 +175,32 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
       .catch(() => setInventory(liveIngredients));
   }, []);
 
-  const addIngredient    = () => setRecipe(p => [...p, { ingredientId:"", name:"", qty:"", unit:"", overheadCost:"" }]);
-  const removeIngredient = (i) => setRecipe(p => p.filter((_, idx) => idx !== i));
+  // Recipe links REAL ingredients only. Utilities (water, gas, charcoal) are
+  // deducted once at day-end, not per plate, so they're kept out of here.
+  const recipeStock = inventory.filter(i => i.category !== "Utilities");
+  const chosenIds   = recipe.map(r => r.ingredientId);
+
+  const addIngredient    = (inv) => setRecipe(p => [...p, newRow(inv)]);
+  const removeIngredient = (i)   => setRecipe(p => p.filter((_, idx) => idx !== i));
   const updateIngredient = (i, val) => setRecipe(p => p.map((r, idx) => idx === i ? { ...r, ...val } : r));
 
-  // Cost calculations
-  const ingredientCost = recipe.reduce((sum, r) => {
+  // Cost = ingredients only (per serving). Overheads/utilities live at day-end.
+  const batchCost      = recipe.reduce((sum, r) => {
     const inv = inventory.find(i => i.id === r.ingredientId);
     return sum + (parseFloat(r.qty) || 0) * (inv?.costPerUnit || 0);
   }, 0);
-  const overheadTotal   = recipe.reduce((sum, r) => sum + (parseFloat(r.overheadCost) || 0), 0);
-  const batchQty        = Math.max(1, parseInt(batchSize) || 1);
-  const costPerServing  = (ingredientCost + overheadTotal) / batchQty;
-  const sp              = parseFloat(price) || 0;
-  const gp              = sp > 0 ? ((sp - costPerServing) / sp * 100).toFixed(1) : null;
-  const gpColor         = gp === null ? "#9CA3AF" : gp >= 60 ? "#16A34A" : gp >= 40 ? "#B8860B" : "#DC2626";
+  const batchQty       = Math.max(1, parseInt(batchSize) || 1);
+  const costPerServing = batchCost / batchQty;
+  const sp             = parseFloat(price) || 0;
+  const profit         = sp > 0 ? sp - costPerServing : null;
+  const gp             = sp > 0 ? +((sp - costPerServing) / sp * 100).toFixed(1) : null;
+  const gpColor        = gp === null ? "#9CA3AF" : gp >= 60 ? "#16A34A" : gp >= 40 ? "#B8860B" : "#DC2626";
 
   const validate = () => {
     const e = {};
-    if (!name.trim())                         e.name     = "Required";
-    if (!category)                            e.category = "Required";
-    if (!price || parseFloat(price) <= 0)     e.price    = "Required";
-    // Recipe is optional — items like packaged goods don't need stock tracking
+    if (!name.trim())                     e.name     = "Required";
+    if (!category)                        e.category = "Required";
+    if (!price || parseFloat(price) <= 0) e.price    = "Required";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -192,7 +212,7 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
       const id = "MI-" + name.replace(/\s+/g,"").toUpperCase().slice(0,6) + "-" + Date.now().toString().slice(-4);
       const linkedRecipe = recipe
         .filter(r => r.ingredientId && parseFloat(r.qty) > 0)
-        .map(r => ({ ingredient_id: r.ingredientId, qty: parseFloat(r.qty), overhead_cost: parseFloat(r.overheadCost) || 0 }));
+        .map(r => ({ ingredient_id: r.ingredientId, qty: parseFloat(r.qty) }));
 
       const item = await itemsApi.create({
         id,
@@ -207,27 +227,25 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
       });
 
       setSaved(true);
-      setTimeout(() => { setSaved(false); onSave?.(item); }, 1800);
+      setTimeout(() => { setSaved(false); onSave?.(item); }, 1600);
     } catch(e) {
-      setApiError(e?.response?.data?.error || "Save failed — is the backend running?");
+      setApiError(e?.response?.data?.error || "Couldn't save — check the backend is running and try again.");
     } finally { setSaving(false); }
   };
 
-  // Separate utilities from regular ingredients for display
-  const utilities  = inventory.filter(i => i.category === "Utilities");
-  const hasUtils   = utilities.length > 0;
+  const linkedCount = recipe.filter(r => r.ingredientId && parseFloat(r.qty) > 0).length;
 
   return (
     <div style={{ flex:1, overflowY:"auto", background:"#F5F2EB", padding:"20px", fontFamily:"'Inter',sans-serif" }}>
 
       {/* Header */}
-      <div style={{ background:"linear-gradient(135deg,#1A1A1A,#C5A059)", borderRadius:"8px 8px 0 0", padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+      <div style={{ background:"linear-gradient(135deg,#1A1A1A,#C5A059)", borderRadius:"10px 10px 0 0", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:15, fontWeight:600, color:"#FFF" }}>{name || "New Menu Item"}</div>
-          <div style={{ fontSize:10, color:"rgba(255,255,255,0.6)", marginTop:2 }}>Ingredients + utilities auto-deduct from stock on every sale</div>
+          <div style={{ fontSize:10, color:"rgba(255,255,255,0.6)", marginTop:2 }}>Ingredients deduct from stock on every sale</div>
         </div>
         {gp !== null && (
-          <div style={{ background:"rgba(255,255,255,0.12)", borderRadius:6, padding:"6px 14px", textAlign:"center" }}>
+          <div style={{ background:"rgba(255,255,255,0.12)", borderRadius:8, padding:"6px 14px", textAlign:"center" }}>
             <div style={{ fontSize:18, fontWeight:700, color: gp >= 40 ? "#86EFAC" : "#FCA5A5" }}>{gp}%</div>
             <div style={{ fontSize:9, color:"rgba(255,255,255,0.6)" }}>Gross Profit</div>
           </div>
@@ -235,15 +253,15 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
       </div>
 
       {/* Body */}
-      <div style={{ background:"#FFF", border:"1px solid #E5E0D5", borderTop:"none", borderRadius:"0 0 8px 8px", padding:"20px" }}>
+      <div style={{ background:"#FFF", border:"1px solid #E5E0D5", borderTop:"none", borderRadius:"0 0 10px 10px", padding:"22px" }}>
 
         {apiError && (
-          <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:16 }}>{apiError}</div>
+          <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:6, fontSize:11, color:"#8B3A3A", marginBottom:16 }}>{apiError}</div>
         )}
 
         {/* ── Basic Details ── */}
         <div style={{ fontSize:11, fontWeight:600, color:"#C5A059", marginBottom:10, letterSpacing:0.3, textTransform:"uppercase" }}>Basic Details</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:14, marginBottom:18 }}>
           <Field label="Item Name" required error={errors.name}>
             <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Masala Tea, Pilau Special"
               style={{ ...fi, borderColor: errors.name ? "#FCA5A5" : "#E5E0D5" }} />
@@ -263,99 +281,91 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
                 style={{ ...fi, paddingLeft:46, borderColor: errors.price ? "#FCA5A5" : "#E5E0D5" }} />
             </div>
           </Field>
-          <Field label="Batch Size" hint="How many servings does one full recipe make? e.g. 90 cups from 10L tea">
+          <Field label="Servings per batch" hint="One full recipe makes how many servings? e.g. 90 cups from 10 L tea">
             <input type="number" min="1" step="1" value={batchSize} onChange={e => setBatchSize(e.target.value)}
               placeholder="e.g. 90" style={fi} />
           </Field>
           <div style={{ gridColumn:"1/-1" }}>
-            <Field label="Description" hint="Optional — shown on POS">
+            <Field label="Description" hint="Optional — shown on the POS">
               <input value={description} onChange={e => setDescription(e.target.value)}
                 placeholder="e.g. Spiced with ginger, served hot" style={fi} />
             </Field>
           </div>
         </div>
 
-        <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", marginBottom:20 }}>
+        <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", marginBottom:22 }}>
           <input type="checkbox" checked={bestseller} onChange={e => setBestseller(e.target.checked)} style={{ accentColor:"#C5A059", width:14, height:14 }} />
           <span style={{ fontSize:12, color:"#4A4A4A", fontWeight:500 }}>Mark as Bestseller</span>
         </label>
 
-        {/* ── Recipe & Ingredients ── */}
-        <div style={{ fontSize:11, fontWeight:600, color:"#C5A059", marginBottom:6, letterSpacing:0.3, textTransform:"uppercase" }}>
-          Recipe — Ingredients & Utilities
-        </div>
-        <div style={{ fontSize:11, color:"#7A7A7A", marginBottom:10 }}>
-          Search ingredients below. For water, gas, charcoal — add them in Inventory under <strong>Utilities</strong> category, they'll show with a ⚡ badge. The <em>Overhead</em> column is for any extra fixed cost per serving you want to add manually.
+        {/* ── Recipe (ingredients only) ── */}
+        <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:6 }}>
+          <div style={{ fontSize:11, fontWeight:600, color:"#C5A059", letterSpacing:0.3, textTransform:"uppercase" }}>Recipe — Ingredients</div>
+          {linkedCount > 0 && <div style={{ fontSize:10, color:"#9CA3AF" }}>{linkedCount} linked · qty is for the whole batch ({batchQty} serving{batchQty>1?"s":""})</div>}
         </div>
 
-        {/* Utilities quick-reminder */}
-        {!hasUtils && (
-          <div style={{ padding:"8px 12px", background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:6, fontSize:11, color:"#92400E", marginBottom:10 }}>
-            💡 No utilities found in inventory yet. Go to <strong>Inventory → + Add Ingredient</strong> and add Water, LPG Gas, Charcoal or Firewood with category set to <strong>"Utilities"</strong> — they'll appear here in the search.
+        {/* Day-end note */}
+        <div style={{ display:"flex", gap:8, padding:"9px 12px", background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:8, fontSize:11, color:"#92400E", marginBottom:14 }}>
+          <span>⚡</span>
+          <span>Water, gas, charcoal and other overheads aren't added here — they're deducted once at day-end, shared across all sales (<strong>Settings → Daily Overheads</strong>).</span>
+        </div>
+
+        {/* Search to add */}
+        <AddIngredientSearch inventory={recipeStock} chosenIds={chosenIds} onAdd={addIngredient} />
+
+        {/* Linked ingredient cards */}
+        {recipe.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"26px 16px", border:"1px dashed #E5E0D5", borderRadius:10, color:"#B0A99A", background:"#FCFBF8" }}>
+            <div style={{ fontSize:24, marginBottom:4 }}>🍲</div>
+            <div style={{ fontSize:12.5, fontWeight:600, color:"#7A7A7A" }}>No ingredients yet</div>
+            <div style={{ fontSize:11, marginTop:2 }}>Use the search above to add what this item is made of.</div>
           </div>
+        ) : (
+          recipe.map((row, i) => (
+            <IngredientCard key={row._id} index={i} row={row}
+              invItem={inventory.find(x => x.id === row.ingredientId)}
+              onChange={updateIngredient} onRemove={removeIngredient} />
+          ))
         )}
 
-        {errors.recipe && (
-          <div style={{ padding:"8px 12px", background:"#FFFBEB", border:"1px solid #FEF3C7", borderRadius:4, fontSize:11, color:"#B8860B", marginBottom:10 }}>{errors.recipe}</div>
-        )}
-
-        {/* Column headers */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 90px 90px 80px 28px", gap:6, padding:"0 10px", marginBottom:4 }}>
-          {["Ingredient / Utility","Qty","Overhead (KES)","Line Cost",""].map((h,i) => (
-            <div key={i} style={{ fontSize:9, fontWeight:600, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5, textAlign: i >= 2 ? "right" : "left" }}>{h}</div>
-          ))}
-        </div>
-
-        {recipe.map((row, i) => (
-          <IngredientRow key={i} index={i} row={row} inventory={inventory} onChange={updateIngredient} onRemove={removeIngredient} />
-        ))}
-
-        <button onClick={addIngredient}
-          style={{ width:"100%", padding:"8px", border:"1px dashed #C5A059", borderRadius:6, background:"#FEF9F0", color:"#C5A059", fontWeight:600, fontSize:12, cursor:"pointer", marginTop:4 }}>
-          + Add Ingredient / Utility
-        </button>
-
-        {/* Cost summary */}
+        {/* Cost summary — ingredients only */}
         {costPerServing > 0 && (
-          <div style={{ marginTop:14, padding:"12px 14px", background:"#F8F8F8", borderRadius:6, border:"1px solid #E5E0D5" }}>
-            <div style={{ fontSize:10, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5, marginBottom:10 }}>
-              Cost Breakdown — per serving (batch of {batchQty})
+          <div style={{ marginTop:16, padding:"14px 16px", background:"#FAF8F3", borderRadius:10, border:"1px solid #EFE9DD" }}>
+            <div style={{ fontSize:10, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5, marginBottom:12 }}>
+              Cost per serving — batch of {batchQty}
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:8 }}>
-              <div style={{ background:"#FFF", borderRadius:4, padding:"8px 10px", border:"1px solid #E5E0D5" }}>
-                <div style={{ fontSize:9, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Ingredients</div>
-                <div style={{ fontSize:14, fontWeight:600, color:"#1A1A1A", marginTop:2 }}>KES {(ingredientCost/batchQty).toFixed(2)}</div>
-              </div>
-              <div style={{ background:"#FFFBEB", borderRadius:4, padding:"8px 10px", border:"1px solid #FDE68A" }}>
-                <div style={{ fontSize:9, color:"#92400E", textTransform:"uppercase", letterSpacing:0.5 }}>Overheads</div>
-                <div style={{ fontSize:14, fontWeight:600, color:"#92400E", marginTop:2 }}>KES {overheadTotal.toFixed(2)}</div>
-              </div>
-              <div style={{ background:"#FEF2F2", borderRadius:4, padding:"8px 10px", border:"1px solid #FECACA" }}>
-                <div style={{ fontSize:9, color:"#8B3A3A", textTransform:"uppercase", letterSpacing:0.5 }}>True cost</div>
-                <div style={{ fontSize:14, fontWeight:600, color:"#8B3A3A", marginTop:2 }}>KES {costPerServing.toFixed(2)}</div>
-              </div>
-              <div style={{ background: gp >= 40 ? "#F0FDF4" : "#FEF2F2", borderRadius:4, padding:"8px 10px", border:`1px solid ${gp >= 40 ? "#86EFAC" : "#FECACA"}` }}>
-                <div style={{ fontSize:9, color: gpColor, textTransform:"uppercase", letterSpacing:0.5 }}>GP %</div>
-                <div style={{ fontSize:14, fontWeight:600, color: gpColor, marginTop:2 }}>{gp !== null ? gp + "%" : "—"}</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:10 }}>
+              {[
+                { label:"Ingredient cost", val:"KES " + costPerServing.toFixed(2), color:"#1A1A1A" },
+                { label:"Selling price",   val: sp > 0 ? "KES " + sp.toFixed(2) : "—", color:"#1A1A1A" },
+                { label:"Profit / serving", val: profit !== null ? "KES " + profit.toFixed(2) : "—", color:gpColor },
+              ].map((c,k) => (
+                <div key={k} style={{ background:"#FFF", borderRadius:8, padding:"10px 12px", border:"1px solid #EFE9DD" }}>
+                  <div style={{ fontSize:9, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5 }}>{c.label}</div>
+                  <div style={{ fontSize:15, fontWeight:600, color:c.color, marginTop:3 }}>{c.val}</div>
+                </div>
+              ))}
+              <div style={{ background: gp >= 40 ? "#F0FDF4" : "#FEF2F2", borderRadius:8, padding:"10px 12px", border:`1px solid ${gp >= 40 ? "#86EFAC" : "#FECACA"}` }}>
+                <div style={{ fontSize:9, color: gpColor, textTransform:"uppercase", letterSpacing:0.5 }}>Gross profit</div>
+                <div style={{ fontSize:15, fontWeight:600, color: gpColor, marginTop:3 }}>{gp !== null ? gp + "%" : "—"}</div>
               </div>
             </div>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:"#4A4A4A" }}>
-              <span>Profit per serving: <strong style={{ color: gpColor }}>KES {sp > 0 ? (sp - costPerServing).toFixed(2) : "—"}</strong></span>
-              {dailyOH > 0 && <span style={{ color:"#9CA3AF", fontSize:11 }}>+ KES {dailyOH}/day fixed overhead shared across all sales</span>}
+            <div style={{ fontSize:11, color:"#9CA3AF" }}>
+              Before day-end overheads{dailyOH > 0 ? ` (KES ${Math.round(dailyOH)}/day, shared across all sales)` : ""}.
             </div>
           </div>
         )}
 
         {/* Buttons */}
-        <div style={{ display:"flex", gap:10, marginTop:20 }}>
+        <div style={{ display:"flex", gap:10, marginTop:22 }}>
           {onCancel && (
-            <button onClick={onCancel} style={{ padding:"10px 20px", borderRadius:6, border:"1px solid #E5E0D5", background:"#FFF", color:"#7A7A7A", fontWeight:600, fontSize:13, cursor:"pointer" }}>Cancel</button>
+            <button onClick={onCancel} style={{ padding:"11px 20px", borderRadius:8, border:"1px solid #E5E0D5", background:"#FFF", color:"#7A7A7A", fontWeight:600, fontSize:13, cursor:"pointer" }}>Cancel</button>
           )}
           <button onClick={handleSave} disabled={saving || saved}
-            style={{ flex:1, padding:"11px", borderRadius:6, border:"none",
+            style={{ flex:1, padding:"12px", borderRadius:8, border:"none",
               background: saved ? "#16A34A" : saving ? "#9CA3AF" : "linear-gradient(135deg,#1A1A1A,#C5A059)",
               color:"#FFF", fontWeight:600, fontSize:13, cursor: saving ? "default" : "pointer", transition:"all 0.3s" }}>
-            {saved ? "✓ Saved — stock deduction active" : saving ? "Saving..." : "Save Menu Item"}
+            {saved ? "✓ Saved" : saving ? "Saving..." : "Save menu item"}
           </button>
         </div>
       </div>

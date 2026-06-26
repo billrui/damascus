@@ -1,12 +1,14 @@
-import { useState, useMemo, useEffect } from "react";
-import { inventoryApi } from "../api";
+import { useState, useMemo, useEffect, Fragment } from "react";
+import { inventoryApi, itemsApi } from "../api";
 import { fmt, fmtK } from "../utils";
 import { Card, Btn, SectionHeader, ExpiryBadge } from "../components/UI";
 import { useBreakpoint } from "../hooks/useBreakpoint";
 
-const _CATS  = ["Proteins","Grains","Vegetables","Oils","Spices","Dairy","Beverages","Spirits","Produce","Bakery","Utilities","Other"];
+const _CATS  = ["Proteins","Grains","Vegetables","Oils","Spices","Dairy","Beverages","Spirits","Produce","Bakery","Utilities","Supplies","Other"];
 
 const fmtStock = (n) => String(Math.round(parseFloat(n)||0));
+// Quantities (recipe amounts, deductions) keep fractions like 0.25 / 0.5 but show whole numbers cleanly
+const fmtQty = (n) => { const f = parseFloat(n) || 0; return Number.isInteger(f) ? String(f) : String(parseFloat(f.toFixed(3))); };
 const _UNITS = ["g","kg","ml","l","pcs","loaf","tray","slice","bunch","bottle","can","packet","box","bundle","crate","sack","jerrycan","tin","bar","roll","bag","sachet","cup"];
 
 // --- AddIngredientModal ---
@@ -252,16 +254,188 @@ function DeleteConfirmModal({ ingredient, onClose, onDeleted }) {
   );
 }
 
+// ── Produce Batch: deduct a menu item's recipe ingredients (× batches) from store ──
+export function ProduceBatchView({ batches, setBatches, ingredients: propIngredients = [] }) {
+  const { mobile } = useBreakpoint();
+  const [items,   setItems]   = useState([]);
+  const [pickId,  setPickId]  = useState("");
+  const [count,   setCount]   = useState(1);
+  const [busy,    setBusy]    = useState(false);
+  const [done,    setDone]    = useState(null);
+  const [error,   setError]   = useState("");
+  const [search,  setSearch]  = useState("");
+
+  useEffect(() => {
+    itemsApi.list().then(list => setItems((list || []).filter(it => (it.recipe || []).length > 0))).catch(() => {});
+  }, [done]);
+
+  const stockOf = (ingId) => batches
+    .filter(b => (b.ingredientId || b.ingredient_id) === ingId && b.status === "active")
+    .reduce((s, b) => s + (parseFloat(b.remaining) || 0), 0);
+
+  const item    = items.find(it => it.id === pickId);
+  const n        = Math.max(1, parseInt(count) || 1);
+  const filtered = items
+    .filter(it => it.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Build deduction preview
+  const lines = (item?.recipe || []).map(r => {
+    const ing  = propIngredients.find(i => i.id === r.ingredient_id);
+    const name = r.name || ing?.name || r.ingredient_id;
+    const unit = r.unit || ing?.unit || "";
+    const need = (parseFloat(r.qty) || 0) * n;
+    const have = stockOf(r.ingredient_id);
+    return { name, unit, need, have, short: have < need };
+  });
+  const anyShort = lines.some(l => l.short);
+
+  const produce = async () => {
+    if (!item) { setError("Pick an item to produce"); return; }
+    setBusy(true); setError("");
+    try {
+      const res = await inventoryApi.produce({ menu_item_id: item.id, batches: n });
+      // refresh batches so stock everywhere reflects the deduction
+      const fresh = await inventoryApi.batches({ limit: 500 }).catch(() => null);
+      if (fresh && setBatches) setBatches(fresh.batches || []);
+      setDone(res);
+    } catch (e) {
+      const d = e?.response?.data;
+      const real = d?.error || d?.message;
+      setError(
+        real
+          ? `Couldn't produce: ${real}`
+          : e?.response
+            ? `Couldn't produce (server error ${e.response.status}). If this just appeared, the backend may need a restart.`
+            : "Couldn't reach the server — is the backend running?"
+      );
+    } finally { setBusy(false); }
+  };
+
+  if (done) {
+    return (
+      <div style={{ flex:1, overflowY:"auto", padding: mobile ? 16 : 32, background:"#F5F2EB" }}>
+        <div style={{ maxWidth:560, margin:"0 auto", background:"#FFF", border:"1px solid #E5E0D5", borderRadius:10, padding:24, textAlign:"center" }}>
+          <div style={{ width:48, height:48, borderRadius:"50%", background:"#F0FDF4", border:"1px solid #86EFAC", color:"#16A34A", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, margin:"0 auto 12px" }}>✓</div>
+          <div style={{ fontSize:16, fontWeight:600, color:"#1A1A1A" }}>Produced {done.batches} × {done.item}</div>
+          {done.servings != null && (
+            <div style={{ display:"inline-block", marginTop:8, padding:"6px 14px", background:"#F0FDF4", border:"1px solid #86EFAC", borderRadius:20, fontSize:12, color:"#15803D", fontWeight:600 }}>
+              {fmtQty(done.servings)} now available to sell
+            </div>
+          )}
+          <div style={{ fontSize:12, color:"#7A7A7A", marginTop:12, marginBottom:16 }}>These ingredients were deducted from store (FEFO):</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6, textAlign:"left", marginBottom:18 }}>
+            {(done.deducted || []).map((d, i) => (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:13, padding:"8px 12px", background:"#FAF8F3", borderRadius:6, border:"1px solid #EFE9DD" }}>
+                <span style={{ color:"#1A1A1A" }}>{d.ingredient}</span>
+                <span style={{ fontWeight:600, color:"#8B3A3A", fontFamily:"monospace" }}>−{fmtQty(d.qty)}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => { setDone(null); setPickId(""); setCount(1); setSearch(""); }}
+            style={{ padding:"10px 24px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#1A1A1A,#C5A059)", color:"#FFF", fontWeight:600, fontSize:13, cursor:"pointer" }}>
+            Produce another
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding: mobile ? 16 : 32, background:"#F5F2EB" }}>
+      <div style={{ maxWidth:860, margin:"0 auto" }}>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:18, fontWeight:600, color:"#1A1A1A" }}>Produce a Batch</div>
+          <div style={{ fontSize:12, color:"#7A7A7A", marginTop:2 }}>Pick what the kitchen is cooking. The recipe's ingredients are deducted from store (FEFO) — once per batch, not per sale.</div>
+        </div>
+
+        {error && <div style={{ padding:"9px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:6, fontSize:12, color:"#8B3A3A", marginBottom:14 }}>{error}</div>}
+
+        {items.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"30px 16px", border:"1px dashed #E5E0D5", borderRadius:10, color:"#9CA3AF", background:"#FCFBF8" }}>
+            <div style={{ fontSize:13, fontWeight:600, color:"#7A7A7A" }}>No items with recipes yet</div>
+            <div style={{ fontSize:11, marginTop:3 }}>Add a menu item and link its ingredients first, then produce it here.</div>
+          </div>
+        ) : (
+          <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr" : "300px 1fr", gap:18 }}>
+            {/* Pick item */}
+            <div style={{ background:"#FFF", border:"1px solid #E5E0D5", borderRadius:10, padding:12, alignSelf:"start" }}>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search item..."
+                style={{ width:"100%", boxSizing:"border-box", border:"1px solid #E5E0D5", borderRadius:6, padding:"8px 10px", fontSize:12, outline:"none", marginBottom:8 }} />
+              <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:340, overflowY:"auto" }}>
+                {filtered.map(it => (
+                  <button key={it.id} onClick={() => { setPickId(it.id); setError(""); }}
+                    style={{ textAlign:"left", padding:"9px 10px", borderRadius:6, cursor:"pointer",
+                      border: `1px solid ${pickId===it.id ? "#C5A059" : "#E5E0D5"}`,
+                      background: pickId===it.id ? "#FEF9F0" : "#FFF" }}>
+                    <div style={{ fontSize:12.5, fontWeight:600, color:"#1A1A1A" }}>{it.name}</div>
+                    <div style={{ fontSize:10, color:"#9CA3AF" }}>{(it.recipe||[]).length} ingredient{(it.recipe||[]).length===1?"":"s"}{it.batch_size?` · makes ${it.batch_size}`:""}</div>
+                  </button>
+                ))}
+                {filtered.length === 0 && <div style={{ fontSize:11, color:"#9CA3AF", padding:8 }}>No match.</div>}
+              </div>
+            </div>
+
+            {/* Batch + preview */}
+            <div style={{ background:"#FFF", border:"1px solid #E5E0D5", borderRadius:10, padding:16 }}>
+              {!item ? (
+                <div style={{ color:"#9CA3AF", fontSize:13, textAlign:"center", padding:"40px 0" }}>Select an item to produce.</div>
+              ) : (
+                <>
+                  <div style={{ fontSize:15, fontWeight:600, color:"#1A1A1A", marginBottom:2 }}>{item.name}</div>
+                  <div style={{ fontSize:11, color:"#9CA3AF", marginBottom:14 }}>{item.batch_size ? `One batch = ${item.batch_size} serving${item.batch_size==1?"":"s"}` : "Recipe quantities are per batch"}</div>
+
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+                    <label style={{ fontSize:12, fontWeight:600, color:"#4A4A4A" }}>Batches to produce</label>
+                    <input type="number" min="1" step="1" value={count} onChange={e => setCount(e.target.value)}
+                      style={{ width:90, border:"1px solid #E5E0D5", borderRadius:6, padding:"8px 10px", fontSize:14, textAlign:"center", outline:"none", fontWeight:600 }} />
+                  </div>
+
+                  <div style={{ fontSize:9, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>Will deduct from store</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:16 }}>
+                    {lines.map((l, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:12.5, padding:"9px 12px", borderRadius:6,
+                        background: l.short ? "#FEF2F2" : "#FAF8F3", border:`1px solid ${l.short ? "#FECACA" : "#EFE9DD"}` }}>
+                        <span style={{ fontWeight:600, color:"#1A1A1A" }}>{l.name}</span>
+                        <span style={{ display:"flex", gap:12, alignItems:"center" }}>
+                          <span style={{ fontFamily:"monospace", color:"#8B3A3A", fontWeight:600 }}>−{fmtQty(l.need)} {l.unit}</span>
+                          <span style={{ fontSize:10, color: l.short ? "#DC2626" : "#9CA3AF" }}>
+                            {l.short ? `short (have ${fmtQty(l.have)})` : `have ${fmtQty(l.have)}`}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {anyShort && <div style={{ fontSize:11, color:"#DC2626", marginBottom:12 }}>Not enough stock for one or more ingredients. Receive more, or reduce the batch count.</div>}
+
+                  <button onClick={produce} disabled={busy || anyShort}
+                    style={{ width:"100%", padding:"12px", borderRadius:8, border:"none",
+                      background: (busy || anyShort) ? "#9CA3AF" : "linear-gradient(135deg,#1A1A1A,#C5A059)",
+                      color:"#FFF", fontWeight:600, fontSize:14, cursor: (busy || anyShort) ? "not-allowed" : "pointer" }}>
+                    {busy ? "Producing..." : `Produce ${n} batch${n>1?"es":""} of ${item.name}`}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function InventoryView({ batches, setBatches, ingredients: propIngredients, setIngredients, storeIssues, setStoreIssues, user, subView }) {
   const { mobile } = useBreakpoint();
   const INGREDIENTS = propIngredients || [];
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("all");
   const [filterLoc, setFilterLoc] = useState("all");
-  const [fefoSort,  setFefoSort]  = useState(true);
   const [showAdd,   setShowAdd]   = useState(false);
   const [editIng,   setEditIng]   = useState(null);
   const [deleteIng, setDeleteIng] = useState(null);
+  const [openRows,  setOpenRows]  = useState(() => new Set());
+  const toggleRow = (id) => setOpenRows(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [tab,       setTab]       = useState("receive");
 
   const view = subView || "list";
@@ -277,7 +451,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
         return matchSearch && matchCat;
       })
       .map(ing => {
-        const ingBatches    = batches.filter(b => b.ingredientId === ing.id && (filterLoc === "all" || b.location === filterLoc));
+        const ingBatches    = batches.filter(b => (b.ingredientId || b.ingredient_id) === ing.id && (filterLoc === "all" || b.location === filterLoc));
         const activeBatches = ingBatches.filter(b => b.status === "active");
         const totalActive   = activeBatches.reduce((s, b) => s + (parseFloat(b.remaining)||0), 0);
         const sortedActive  = [...activeBatches].sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
@@ -289,21 +463,20 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
         return { ...ing, costPerUnit, ingBatches, activeBatches: sortedActive, totalActive, earliestExp, isLow, value, expiryMs };
       })
       .filter(ing => ing.ingBatches.length > 0 || filterLoc === "all");
-    if (fefoSort) {
-      mapped.sort((a, b) => {
-        const ord = item => {
-          if (!item.earliestExp) return 99;
-          const days = Math.round((new Date(item.earliestExp.expiry) - new Date()) / 86400000);
-          if (days < 0) return 0; if (days === 0) return 1;
-          if (days <= 3) return 2; if (days <= 7) return 3; return 4;
-        };
-        const sa = ord(a), sb = ord(b);
-        if (sa !== sb) return sa - sb;
-        return a.expiryMs - b.expiryMs;
-      });
-    }
+    // Always sort by urgency (soonest-to-expire first)
+    mapped.sort((a, b) => {
+      const ord = item => {
+        if (!item.earliestExp) return 99;
+        const days = Math.round((new Date(item.earliestExp.expiry) - new Date()) / 86400000);
+        if (days < 0) return 0; if (days === 0) return 1;
+        if (days <= 3) return 2; if (days <= 7) return 3; return 4;
+      };
+      const sa = ord(a), sb = ord(b);
+      if (sa !== sb) return sa - sb;
+      return a.expiryMs - b.expiryMs;
+    });
     return mapped;
-  }, [INGREDIENTS, batches, search, filterCat, filterLoc, fefoSort]);
+  }, [INGREDIENTS, batches, search, filterCat, filterLoc]);
 
   // Route to receive/issue sub-screens
   if (view === "receive" || view === "issue") {
@@ -311,7 +484,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
     return (
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
         <div style={{ display:"flex", borderBottom:"2px solid #E5E0D5", background:"#FFF", padding:"0 28px", flexShrink:0 }}>
-          {[{ id:"receive", label:"Receive Stock" }, { id:"issue", label:"Issue Stock" }].map(t => (
+          {[{ id:"receive", label:"Receive Stock" }, { id:"issue", label:"Issue Stock" }, { id:"produce", label:"Produce Batch" }].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               padding:"14px 24px", border:"none",
               borderBottom: activeTab===t.id ? "2px solid #C5A059" : "2px solid transparent",
@@ -327,6 +500,9 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
         )}
         {activeTab === "issue" && (
           <IssueStockView batches={batches} setBatches={setBatches||(() => {})} storeIssues={storeIssues||[]} setStoreIssues={setStoreIssues||(() => {})} user={user||{}} ingredients={propIngredients||[]} />
+        )}
+        {activeTab === "produce" && (
+          <ProduceBatchView batches={batches} setBatches={setBatches||(() => {})} ingredients={propIngredients||[]} />
         )}
       </div>
     );
@@ -389,9 +565,6 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
         <select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} style={{ padding:"0 16px", borderRadius:4, border:"1px solid #E5E0D5", background:"#FFF", fontSize:12, cursor:"pointer" }}>
           {locations.map(l => <option key={l} value={l}>{l === "all" ? "All Locations" : l}</option>)}
         </select>
-        <button onClick={() => setFefoSort(f => !f)} style={{ padding:"0 18px", borderRadius:4, fontSize:11, fontWeight:600, cursor:"pointer", border: fefoSort ? "1px solid #C5A059" : "1px solid #E5E0D5", background: fefoSort ? "#FEF9F0" : "#FFF", color: fefoSort ? "#C5A059" : "#7A7A7A" }}>
-          FEFO {fefoSort ? "ON" : "OFF"}
-        </button>
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)", gap:12, marginBottom:24 }}>
@@ -428,8 +601,13 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
                 const expColor  = daysToExp === null ? "#9CA3AF" : daysToExp < 0 ? "#8B3A3A" : daysToExp <= 3 ? "#B8860B" : "#2E7D64";
                 const expBg     = daysToExp === null ? "#F9FAFB" : daysToExp < 0 ? "#FEF2F2" : daysToExp <= 3 ? "#FFFBEB" : "#F0FDF4";
                 return (
-                  <tr key={ing.id} style={{ borderBottom:"1px solid #F0EDE6", background: idx%2===0 ? "#FFF" : "#FAFAFA" }}>
-                    <td style={{ padding:"12px 16px", fontSize:13, fontWeight:600, color:"#1A1A1A" }}>{ing.name}</td>
+                  <Fragment key={ing.id}>
+                  <tr style={{ borderBottom: openRows.has(ing.id) ? "none" : "1px solid #F0EDE6", background: idx%2===0 ? "#FFF" : "#FAFAFA" }}>
+                    <td onClick={()=>toggleRow(ing.id)} style={{ padding:"12px 16px", fontSize:13, fontWeight:600, color:"#1A1A1A", cursor:"pointer", userSelect:"none" }}>
+                      <span style={{ display:"inline-block", width:14, color:"#9CA3AF", transform: openRows.has(ing.id) ? "rotate(90deg)" : "none", transition:"transform .15s" }}>▸</span>
+                      {ing.name}
+                      {ing.activeBatches.length > 1 && <span style={{ marginLeft:6, fontSize:10, color:"#9CA3AF" }}>({ing.activeBatches.length} batches)</span>}
+                    </td>
                     <td style={{ padding:"12px 16px", fontSize:12, color:"#7A7A7A" }}>{ing.category}</td>
                     <td style={{ padding:"12px 16px", fontSize:13, fontWeight:600, color: ing.isLow ? "#8B3A3A" : "#1A1A1A", fontFamily:"monospace" }}>
                       {Math.round(ing.totalActive)} {ing.unit}
@@ -456,6 +634,37 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
                       </div>
                     </td>
                   </tr>
+                  {openRows.has(ing.id) && (
+                    <tr style={{ borderBottom:"1px solid #F0EDE6", background:"#FBFAF7" }}>
+                      <td colSpan={8} style={{ padding:"4px 16px 12px 30px" }}>
+                        {ing.activeBatches.length === 0 ? (
+                          <div style={{ fontSize:11, color:"#9CA3AF", padding:"8px 0" }}>No active batches in stock.</div>
+                        ) : (
+                          <div style={{ display:"flex", flexDirection:"column", gap:4, paddingTop:6 }}>
+                            <div style={{ fontSize:9, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Batches — used first-expired-first (FEFO)</div>
+                            {ing.activeBatches.map((b, bi) => {
+                              const dleft = Math.round((new Date(b.expiry) - new Date()) / 86400000);
+                              const dColor = isNaN(dleft) ? "#9CA3AF" : dleft < 0 ? "#8B3A3A" : dleft <= 3 ? "#B8860B" : "#2E7D64";
+                              return (
+                                <div key={b.id||bi} style={{ display:"flex", alignItems:"center", gap:12, fontSize:12, padding:"7px 10px", borderRadius:6, background:"#FFF", border:"1px solid #EFE9DD" }}>
+                                  {bi === 0
+                                    ? <span style={{ fontSize:9, fontWeight:800, color:"#fff", background:"#2E7D64", padding:"2px 7px", borderRadius:10, flexShrink:0 }}>NEXT OUT</span>
+                                    : <span style={{ fontSize:9, fontWeight:700, color:"#9CA3AF", width:58, flexShrink:0 }}>#{bi+1}</span>}
+                                  <span style={{ fontWeight:700, fontFamily:"monospace", color:"#1A1A1A", minWidth:90 }}>{Math.round(parseFloat(b.remaining)||0)} {ing.unit}</span>
+                                  <span style={{ color:"#7A7A7A" }}>exp {b.expiry ? new Date(b.expiry).toLocaleDateString() : "—"}</span>
+                                  <span style={{ color:dColor, fontWeight:600 }}>
+                                    {isNaN(dleft) ? "" : dleft < 0 ? `expired ${Math.abs(dleft)}d ago` : dleft === 0 ? "expires today" : `${dleft}d left`}
+                                  </span>
+                                  {(b.batchNo||b.batch_no) && <span style={{ color:"#B0A99A", fontSize:10, marginLeft:"auto" }}>{b.batchNo||b.batch_no}</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -513,7 +722,7 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
                     {isLow&&!isOut&&<span style={{fontSize:10,background:"#FFFBEB",color:"#B8860B",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>LOW</span>}
                   </td>
                   <td style={{ padding:"10px 16px", fontSize:12, color:"#7A7A7A" }}>{i.unit}</td>
-                  <td style={{ padding:"10px 16px", fontSize:11, color:"#9CA3AF" }}>{reorder>0?`Reorder at ${reorder}`:"-"}</td>
+                  <td style={{ padding:"10px 16px", fontSize:11, color:"#9CA3AF" }}>{reorder>0?`Reorder at ${fmtQty(reorder)}`:"-"}</td>
                 </tr>
               );
             })}
@@ -528,6 +737,14 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
 
 export function ReceiveStockView({ batches, setBatches, ingredients: propIngredients = [] }) {
   const { mobile } = useBreakpoint();
+  // Auto batch ref = ingredient name + receive date & time (e.g. "Baking Powder - 18/6/2026 14:30")
+  const genBatchNo = (ing) => {
+    const d = new Date();
+    const date = `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`;
+    const time = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    const name = (ing?.name || "").trim();
+    return name ? `${name} - ${date} ${time}` : `${date} ${time}`;
+  };
   const [selected, setSelected] = useState(null);
   const [form, setForm]         = useState({ batchNo:"", qty:"", costPerUnit:"", expiry:"", location:"Main Store" });
   const [search, setSearch]     = useState("");
@@ -542,13 +759,14 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
 
   const pick = (ing) => {
     setSelected(ing);
-    setForm({ batchNo:"", qty:"", costPerUnit:String(ing.costPerUnit||ing.cost_per_unit||""), expiry:"", location:"Main Store" });
+    setForm({ batchNo:genBatchNo(ing), qty:"", costPerUnit:String(ing.costPerUnit||ing.cost_per_unit||""), expiry:"", location:"Main Store" });
     setError(""); setSaved(false);
   };
 
   const submit = async () => {
     if (!selected)                       { setError("Select an ingredient from the list"); return; }
     if (!form.qty||Number(form.qty)<=0)  { setError("Enter a valid quantity"); return; }
+    if (!form.expiry)                    { setError("Expiry date is required"); return; }
     setSaving(true); setError("");
     try {
       const pUnit = selected.purchase_unit || selected.purchaseUnit;
@@ -560,7 +778,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
       const costPerCookingUnit = hasPU && form.costPerUnit ? Number(form.costPerUnit) / pQty : Number(form.costPerUnit)||undefined;
       const batch = await inventoryApi.receiveBatch({
         ingredient_id: selected.id,
-        batch_no:      form.batchNo||undefined,
+        batch_no:      form.batchNo || genBatchNo(selected),
         qty:           stockQty,
         expiry:        form.expiry||undefined,
         location:      form.location,
@@ -682,7 +900,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12 }}>
                   <div>
-                    <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Expiry Date</label>
+                    <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Expiry Date <span style={{ color:"#DC2626" }}>*</span></label>
                     <input type="date" value={form.expiry} onChange={e=>setForm(f=>({...f,expiry:e.target.value}))} style={{ ...fi, marginTop:4 }} />
                   </div>
                   <div>
@@ -693,8 +911,8 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                   </div>
                 </div>
                 <div>
-                  <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Batch / Invoice No (optional)</label>
-                  <input value={form.batchNo} onChange={e=>setForm(f=>({...f,batchNo:e.target.value}))} placeholder="e.g. INV-2024-054" style={{ ...fi, marginTop:4 }} />
+                  <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Batch</label>
+                  <input value={form.batchNo} readOnly disabled placeholder="auto" style={{ ...fi, marginTop:4, fontFamily:"monospace", color:"#4A4A4A", background:"#F5F2EB", cursor:"not-allowed" }} />
                 </div>
                 <button onClick={submit} disabled={saving}
                   style={{ padding:"12px", borderRadius:6, border:"none", background:saving?"#9CA3AF":"linear-gradient(135deg,#1A1A1A,#C5A059)", color:"#FFF", fontWeight:600, fontSize:13, cursor:saving?"default":"pointer" }}>
@@ -744,6 +962,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
   const [errors,   setErrors]   = useState({});
   const [issueLog, setIssueLog] = useState([]);
   const [notes,    setNotes]    = useState("");
+  const [dest,     setDest]     = useState("Kitchen");
 
   useEffect(() => {
     inventoryApi.issues({ limit:30 }).then(r=>setIssueLog(r.issues||[])).catch(()=>{});
@@ -787,7 +1006,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
           batch_id:      eligible[0].id,
           qty,
           from_location: "Main Store",
-          to_location:   "Kitchen",
+          to_location:   dest,
           notes:         notes || undefined,
         });
         // Deduct FEFO
@@ -822,12 +1041,19 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
       <div style={{ padding: mobile ? "14px 12px 10px" : "20px 28px 14px", flexShrink:0, borderBottom:"1px solid #E5E0D5", background:"#FFFFFF" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
           <div>
-            <SectionHeader title="Issue Stock to Kitchen" sub="Enter quantities issued — stock deducted automatically (FEFO)" />
+            <SectionHeader title={`Issue Stock to ${dest}`} sub="Enter quantities issued — stock deducted automatically (FEFO)" />
             {saved && <div style={{ marginTop:8, padding:"6px 14px", background:"#F0FDF4", border:"1px solid #86EFAC", borderRadius:4, fontSize:11, color:"#15803D", fontWeight:600, display:"inline-block" }}>Stock issued successfully!</div>}
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ fontSize:11, fontWeight:600, color:"#7A7A7A" }}>To:</span>
+              <select value={dest} onChange={e=>setDest(e.target.value)}
+                style={{ ...fi, padding:"8px 12px", fontSize:12, width:"auto", cursor:"pointer" }}>
+                {["Kitchen","Dining","Washrooms","Housekeeping","Bar","General"].map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
             <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notes (optional)..."
-              style={{ ...fi, padding:"8px 12px", fontSize:12, width:220 }} />
+              style={{ ...fi, padding:"8px 12px", fontSize:12, width:200 }} />
             <button onClick={submitAll} disabled={saving||!hasQtys}
               style={{ padding:"10px 24px", borderRadius:6, border:"none", fontWeight:700, fontSize:13, cursor:hasQtys?"pointer":"not-allowed",
                 background:hasQtys?"linear-gradient(135deg,#1A1A1A,#C5A059)":"#E5E0D5", color:hasQtys?"#FFF":"#9CA3AF", whiteSpace:"nowrap" }}>
@@ -855,6 +1081,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
             <tbody>
               {filtered.map((ing,idx)=>{
                 const avail   = totalAvail(ing.id);
+                const nextBatch = availBatches(ing.id)[0];
                 const qty     = qtys[ing.id]||"";
                 const hasQty  = Number(qty)>0;
                 const err     = errors[ing.id];
@@ -866,7 +1093,20 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
                     borderBottom:"1px solid #F0EDE6",
                     opacity: noStock?0.5:1,
                   }}>
-                    <td style={{ padding:"10px 12px", fontWeight:600, color:"#1A1A1A" }}>{ing.name}</td>
+                    <td style={{ padding:"10px 12px", fontWeight:600, color:"#1A1A1A" }}>
+                      {ing.name}
+                      {nextBatch && (() => {
+                        const dleft = Math.round((new Date(nextBatch.expiry) - new Date()) / 86400000);
+                        const dColor = isNaN(dleft) ? "#9CA3AF" : dleft < 0 ? "#8B3A3A" : dleft <= 3 ? "#B8860B" : "#2E7D64";
+                        return (
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3, fontSize:10, fontWeight:500 }}>
+                            <span style={{ background:"#2E7D64", color:"#fff", fontWeight:700, fontSize:8, padding:"1px 5px", borderRadius:8, flexShrink:0 }}>TAKE</span>
+                            <span style={{ color:"#7A7A7A" }}>{nextBatch.batchNo || nextBatch.batch_no || "batch"}</span>
+                            {nextBatch.expiry && <span style={{ color:dColor, fontWeight:600 }}>· exp {new Date(nextBatch.expiry).toLocaleDateString()}{!isNaN(dleft) && (dleft<0?" (expired)":dleft<=3?` (${dleft}d)`:"")}</span>}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td style={{ padding:"10px 12px", color:"#7A7A7A", fontSize:11 }}>{ing.unit}</td>
                     <td style={{ padding:"10px 12px" }}>
                       <span style={{ fontWeight:600, color:noStock?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>

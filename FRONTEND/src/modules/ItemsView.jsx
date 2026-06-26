@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { inventoryApi, itemsApi } from "../api/index.js";
 import { MENU_CATEGORIES } from "../data";
 import { classifyExpiry } from "../utils";
 import NewItemForm from "./NewItemForm";
@@ -52,56 +54,69 @@ function buildStockRows(items, batches, ingredients) {
 // --- ACTION DROPDOWN (shared) -------------------------------------------------
 function ActionDropdown({ children, items: dropItems }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [pos, setPos]   = useState({ top: 0, left: 0 });
+  const btnRef  = useRef(null);
+  const menuRef = useRef(null);
+  const MENU_W  = 190;
+
+  const place = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    let left = r.right - MENU_W;          // right-align to the button
+    if (left < 8) left = 8;               // keep on-screen
+    setPos({ top: r.bottom + 4, left });
+  };
+
+  const toggle = () => { if (!open) place(); setOpen(o => !o); };
 
   useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
+    if (!open) return;
+    const onDown = (e) => {
+      if (btnRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open]);
 
   return (
-    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+    <div style={{ display: "inline-block" }}>
       <button
-        onClick={() => setOpen((o) => !o)}
-        style={{ 
-          padding: "5px 12px", 
-          borderRadius: 4, 
-          border: "none", 
-          background: open ? "#1A1A1A" : "#4A4A4A", 
-          color: "#FFFFFF", 
-          fontWeight: 600, 
-          fontSize: 11, 
-          cursor: "pointer", 
-          display: "flex", 
-          alignItems: "center", 
-          gap: 5, 
-          transition: "background 0.15s" 
+        ref={btnRef}
+        onClick={toggle}
+        style={{
+          padding: "5px 12px", borderRadius: 4, border: "none",
+          background: open ? "#1A1A1A" : "#4A4A4A", color: "#FFFFFF",
+          fontWeight: 600, fontSize: 11, cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 5, transition: "background 0.15s"
         }}
       >
-        Action <span style={{ fontSize: 9 }}>-</span>
+        Action <span style={{ fontSize: 9 }}>▾</span>
       </button>
-      {open && (
-        <div style={{ 
-          position: "absolute", 
-          right: 0, 
-          top: "calc(100% + 4px)", 
-          zIndex: 100, 
-          background: "#FFFFFF", 
-          borderRadius: 4, 
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)", 
-          border: "1px solid #E5E0D5", 
-          minWidth: 190, 
-          overflow: "hidden" 
+      {open && createPortal(
+        <div ref={menuRef} style={{
+          position: "fixed", top: pos.top, left: pos.left, zIndex: 4000,
+          background: "#FFFFFF", borderRadius: 6,
+          boxShadow: "0 8px 28px rgba(0,0,0,0.18)", border: "1px solid #E5E0D5",
+          minWidth: MENU_W, overflow: "hidden", padding: 4
         }}>
           {dropItems.map((di, i) =>
             di === "divider" ? (
-              <div key={i} style={{ height: 1, background: "#F0EDE6", margin: "2px 0" }} />
+              <div key={i} style={{ height: 1, background: "#F0EDE6", margin: "4px 0" }} />
             ) : (
               <ActionItem key={i} {...di} onClick={() => { setOpen(false); di.onClick(); }} />
             )
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -118,8 +133,9 @@ function ActionItem({ icon, label, color, onClick, danger }) {
         display: "flex", 
         alignItems: "center", 
         gap: 10, 
-        padding: "9px 16px", 
+        padding: "9px 14px", 
         cursor: "pointer", 
+        borderRadius: 5,
         background: hov ? (danger ? "#FEF2F2" : "#F8F8F8") : "#FFFFFF", 
         transition: "background 0.1s" 
       }}
@@ -667,15 +683,86 @@ function EditItemModal({ item, onClose, onSave }) {
   const LBL = { fontSize:11, fontWeight:600, color:"#555", marginBottom:4, display:"block", textTransform:"uppercase", letterSpacing:0.5 };
   const margin = form.price > 0 && form.cost > 0 ? ((form.price - form.cost) / form.price * 100).toFixed(1) : null;
 
+  // ── Recipe editing ──
+  const [inventory, setInventory] = useState([]);
+  const [recipe,    setRecipe]    = useState(
+    (item.recipe || []).map(r => ({
+      _id: (crypto.randomUUID?.() || String(Math.random())),
+      ingredient_id: r.ingredient_id, name: r.name, unit: r.unit, qty: String(r.qty ?? ""),
+    }))
+  );
+  const [recipeErr, setRecipeErr] = useState("");
+  const [search,    setSearch]    = useState("");
+  const [showDrop,  setShowDrop]  = useState(false);
+  const dropRef = useRef(null);
+
+  useEffect(() => {
+    // fresh recipe (in case the passed item didn't carry it) + ingredient list
+    itemsApi.get(item.id).then(full => {
+      if (full?.recipe?.length) {
+        setRecipe(full.recipe.map(r => ({
+          _id: (crypto.randomUUID?.() || String(Math.random())),
+          ingredient_id: r.ingredient_id, name: r.name, unit: r.unit, qty: String(r.qty ?? ""),
+        })));
+      }
+    }).catch(() => {});
+    inventoryApi.ingredients().then(data => setInventory((data || []).map(i => ({
+      id: i.id, name: i.name, unit: i.unit, category: i.category || "",
+      costPerUnit: parseFloat(i.cost_per_unit || 0),
+    })))).catch(() => {});
+  }, [item.id]);
+
+  useEffect(() => {
+    const close = (e) => { if (dropRef.current && !dropRef.current.contains(e.target)) setShowDrop(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  const chosen   = recipe.map(r => r.ingredient_id);
+  const matches  = inventory
+    .filter(i => i.category !== "Utilities" && !chosen.includes(i.id))
+    .filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
+    .slice(0, 8);
+
+  const addLine = (inv) => {
+    setRecipe(p => [...p, { _id:(crypto.randomUUID?.()||String(Math.random())), ingredient_id:inv.id, name:inv.name, unit:inv.unit, qty:"" }]);
+    setSearch(""); setShowDrop(false);
+  };
+  const setQty    = (id, v) => setRecipe(p => p.map(r => r._id === id ? { ...r, qty: v } : r));
+  const removeLine= (id)    => setRecipe(p => p.filter(r => r._id !== id));
+
+  const saveAll = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true); setRecipeErr("");
+    try {
+      // 1) save the recipe (replace)
+      const lines = recipe
+        .filter(r => r.ingredient_id && parseFloat(r.qty) > 0)
+        .map(r => ({ ingredient_id: r.ingredient_id, qty: parseFloat(r.qty) }));
+      await itemsApi.setRecipe(item.id, lines);
+      // 2) save the basic fields (parent handles update + close)
+      await onSave({
+        name: form.name.trim(), category: form.category,
+        price: parseFloat(form.price) || 0, cost: parseFloat(form.cost) || 0,
+        description: form.description, bestseller: form.bestseller,
+        on_sale: form.on_sale, original_price: form.on_sale ? (parseFloat(form.original_price) || 0) : null,
+        active: form.active,
+      });
+    } catch (e) {
+      setRecipeErr(e?.response?.data?.error || "Couldn't save the recipe — try again.");
+      setSaving(false);
+    }
+  };
+
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200 }}>
-      <div style={{ background:"#fff", borderRadius:8, width:"min(480px,95vw)", maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:16 }}>
+      <div style={{ background:"#fff", borderRadius:8, width:"min(600px,96vw)", maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
         <div style={{ padding:"16px 22px", borderBottom:"1px solid #E5E0D5", display:"flex", alignItems:"center", justifyContent:"space-between", background:"#FAFAF8" }}>
           <div>
             <div style={{ fontSize:15, fontWeight:700, color:"#1A1A1A" }}>Edit Item</div>
             <div style={{ fontSize:11, color:"#888", marginTop:2 }}>#{item.id} - {item.name}</div>
           </div>
-          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#aaa" }}>-</button>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#aaa" }}>×</button>
         </div>
         <div style={{ overflowY:"auto", padding:"20px 22px", flex:1 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"14px 16px" }}>
@@ -731,12 +818,71 @@ function EditItemModal({ item, onClose, onSave }) {
               <span style={{ color:"#555" }}>Margin %: <strong style={{ color:"#2E7D64" }}>{margin}%</strong></span>
             </div>
           )}
+
+          {/* ── Recipe / Ingredients ── */}
+          <div style={{ marginTop:20, paddingTop:16, borderTop:"1px solid #EFE9DD" }}>
+            <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:8 }}>
+              <label style={{ ...LBL, marginBottom:0, color:"#C5A059" }}>Recipe — Ingredients (per batch)</label>
+              <span style={{ fontSize:10, color:"#9CA3AF" }}>{recipe.length} linked</span>
+            </div>
+
+            {recipeErr && <div style={{ padding:"7px 10px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:8 }}>{recipeErr}</div>}
+
+            {/* search to add */}
+            <div ref={dropRef} style={{ position:"relative", marginBottom:10 }}>
+              <input value={search} onChange={e=>{setSearch(e.target.value);setShowDrop(true);}} onFocus={()=>setShowDrop(true)}
+                placeholder="Search an ingredient to add..." style={{ ...INP, background:"#FEFCF8" }} />
+              {showDrop && matches.length > 0 && (
+                <div style={{ position:"absolute", top:"100%", left:0, right:0, marginTop:4, background:"#fff", border:"1px solid #E5E0D5", borderRadius:6, zIndex:5, boxShadow:"0 8px 24px rgba(0,0,0,0.1)", maxHeight:200, overflowY:"auto", padding:4 }}>
+                  {matches.map(inv => (
+                    <div key={inv.id} onMouseDown={()=>addLine(inv)}
+                      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 10px", cursor:"pointer", borderRadius:5 }}
+                      onMouseEnter={e=>e.currentTarget.style.background="#FEF9F0"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <span style={{ fontSize:12.5, fontWeight:600, color:"#1A1A1A" }}>{inv.name}</span>
+                      <span style={{ fontSize:10, color:"#9CA3AF" }}>{inv.unit} · KES {Math.round(inv.costPerUnit)}/{inv.unit}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* linked ingredient rows */}
+            {recipe.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"18px", border:"1px dashed #E5E0D5", borderRadius:8, color:"#B0A99A", fontSize:12, background:"#FCFBF8" }}>
+                No ingredients linked. Use the search above to add them.
+              </div>
+            ) : recipe.map(r => {
+              const inv = inventory.find(i => i.id === r.ingredient_id);
+              const lineCost = (parseFloat(r.qty)||0) * (inv?.costPerUnit||0);
+              return (
+                <div key={r._id} style={{ display:"flex", alignItems:"center", gap:10, background:"#FFF", border:"1px solid #EFE9DD", borderRadius:8, padding:"8px 10px", marginBottom:6 }}>
+                  <div style={{ width:30, height:30, borderRadius:"50%", background:"#F0FDF4", border:"1px solid #86EFAC", color:"#16A34A", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 }}>
+                    {(r.name||"?").charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:"#1A1A1A", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.name}</div>
+                    {lineCost > 0 && <div style={{ fontSize:10, color:"#9CA3AF" }}>KES {Math.round(lineCost)} / batch</div>}
+                  </div>
+                  <div style={{ position:"relative", width:108, flexShrink:0 }}>
+                    <input type="number" min="0" step="0.001" value={r.qty} onChange={e=>setQty(r._id, e.target.value)} placeholder="0"
+                      style={{ ...INP, padding:"6px 34px 6px 8px", textAlign:"right" }} />
+                    <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontSize:10, color:"#9CA3AF", fontWeight:600, pointerEvents:"none" }}>{r.unit||""}</span>
+                  </div>
+                  <button onClick={()=>removeLine(r._id)} title="Remove"
+                    style={{ width:26, height:26, border:"none", borderRadius:5, background:"transparent", color:"#C7C2B6", cursor:"pointer", fontSize:16, flexShrink:0 }}
+                    onMouseEnter={e=>{e.currentTarget.style.background="#FEF2F2";e.currentTarget.style.color="#DC2626";}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="#C7C2B6";}}>×</button>
+                </div>
+              );
+            })}
+            <div style={{ fontSize:10.5, color:"#9CA3AF", marginTop:6 }}>Quantities are for one whole batch. Used for costing & day-end variance — not deducted per sale.</div>
+          </div>
         </div>
         <div style={{ padding:"14px 22px", borderTop:"1px solid #E5E0D5", display:"flex", gap:10, background:"#FAFAF8" }}>
           <button onClick={onClose} style={{ padding:"9px 20px", border:"1px solid #E5E0D5", borderRadius:4, background:"#fff", color:"#555", cursor:"pointer", fontSize:13 }}>Cancel</button>
-          <button disabled={saving||!form.name.trim()} onClick={async()=>{setSaving(true);await onSave({name:form.name.trim(),category:form.category,price:parseFloat(form.price)||0,cost:parseFloat(form.cost)||0,description:form.description,bestseller:form.bestseller,on_sale:form.on_sale,original_price:form.on_sale?(parseFloat(form.original_price)||0):null,active:form.active});setSaving(false);}}
+          <button disabled={saving||!form.name.trim()} onClick={saveAll}
             style={{ flex:1, padding:"9px 20px", border:"none", borderRadius:4, background:saving||!form.name.trim()?"#ccc":"#C5A059", color:"#fff", cursor:saving?"wait":"pointer", fontSize:13, fontWeight:700 }}>
-            {saving ? "Saving-" : "Save Changes"}
+            {saving ? "Saving…" : "Save Changes"}
           </button>
         </div>
       </div>
@@ -829,10 +975,6 @@ function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewIt
         <span style={{ fontSize:15, fontWeight:700, color:"#1A1A1A" }}>Items</span>
         <span style={{ fontSize:11, color:"#9CA3AF" }}>{filtered.length} item{filtered.length!==1?"s":""}</span>
         <div style={{ flex:1 }} />
-        <button onClick={() => onNavigate?.("produce")}
-          style={{ padding:"7px 14px", background:"#1A1A1A", color:"#C5A059", border:"1px solid #C5A059", borderRadius:4, fontWeight:600, fontSize:11, cursor:"pointer" }}>
-          ⚡ Log Production
-        </button>
         <button onClick={() => onNavigate?.("overheads")}
           style={{ padding:"7px 14px", background:"#FFF", color:"#4A4A4A", border:"1px solid #E5E0D5", borderRadius:4, fontWeight:600, fontSize:11, cursor:"pointer" }}>
           ⚙ Overheads

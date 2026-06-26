@@ -74,6 +74,9 @@ export const inventoryApi = {
   issues:       (params = {}) => api.get("/inventory/issues",     { params }).then(r => r.data),
   recordIssue:  (data)         => api.post("/inventory/issues",    data).then(r => r.data.issue),
 
+  // Production (deduct a recipe's ingredients per batch)
+  produce:      (data)         => api.post("/inventory/produce",   data).then(r => r.data),
+
   // Wastage
   wastage:      (params = {}) => api.get("/inventory/wastage",    { params }).then(r => r.data),
   recordWastage:(data)         => api.post("/inventory/wastage",   data).then(r => r.data.record),

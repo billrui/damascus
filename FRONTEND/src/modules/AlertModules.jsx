@@ -191,13 +191,20 @@ function VarianceCell({ variance, variancePct, shrinkageValue }) {
 // --- EXPIRY CONTROL VIEW ------------------------------------------------------
 export function ExpiryView({ batches, setBatches, wastage, setWastage, user, ingredients = [] }) {
   const { mobile } = useBreakpoint();
+  // Show expiry as a clean local date (e.g. 11/5/2026), not a raw ISO timestamp
+  const fmtExpiry = (d) => {
+    if (!d) return "—";
+    const dt = new Date(d);
+    return isNaN(dt) ? "—" : `${dt.getDate()}/${dt.getMonth() + 1}/${dt.getFullYear()}`;
+  };
   const [filterStatus, setFilterStatus] = useState("all");
 
   const enriched = batches
     .map((b) => {
       const ing = ingredients.find((i) => i.id === (b.ingredient_id || b.ingredientId));
       const exp = classifyExpiry(b);
-      const lossValue = b.remaining * b.costPerUnit;
+      const cost = parseFloat(ing?.costPerUnit ?? ing?.cost_per_unit) || 0;
+      const lossValue = (parseFloat(b.remaining) || 0) * cost;
       return { ...b, ingredientName: ing?.name, unit: ing?.unit, ...exp, lossValue: Math.round(lossValue) };
     })
     .filter((b) => {
@@ -215,7 +222,8 @@ export function ExpiryView({ batches, setBatches, wastage, setWastage, user, ing
     const ing = ingredients.find((i) => i.id === (batch.ingredient_id || batch.ingredientId));
     setBatches((p) => p.map((b) => b.id === batchId ? { ...b, status: "expired" } : b));
     if (setWastage) {
-      const lossValue = Math.round(batch.remaining * (batch.costPerUnit || 0));
+      const cost = parseFloat(ing?.costPerUnit ?? ing?.cost_per_unit) || 0;
+      const lossValue = Math.round((parseFloat(batch.remaining) || 0) * cost);
       const autoEntry = {
         id: `WST-WO-${String(Date.now()).slice(-5)}`,
         date: new Date().toISOString().split("T")[0],
@@ -295,8 +303,8 @@ export function ExpiryView({ batches, setBatches, wastage, setWastage, user, ing
                   <tr key={b.id} style={{ borderBottom: i < enriched.length - 1 ? `1px solid ${LUXURY_THEME.border}` : "none", background: rowBg }}>
                     <td style={{ padding: "12px 16px", fontWeight: 500, fontSize: 12, color: LUXURY_THEME.primary }}>{b.batchNo}</td>
                     <td style={{ padding: "12px 16px", fontSize: 12, fontWeight: 500, color: LUXURY_THEME.textPrimary }}>{b.ingredientName}</td>
-                    <td style={{ padding: "12px 16px", fontSize: 12, color: LUXURY_THEME.textSecondary }}>{b.remaining} {b.unit}</td>
-                    <td style={{ padding: "12px 16px", fontSize: 12, color: expiryColor || LUXURY_THEME.textSecondary, fontWeight: expiryColor ? 600 : 400 }}>{b.expiry}</td>
+                    <td style={{ padding: "12px 16px", fontSize: 12, color: LUXURY_THEME.textSecondary }}>{Math.round(parseFloat(b.remaining) || 0)} {b.unit}</td>
+                    <td style={{ padding: "12px 16px", fontSize: 12, color: expiryColor || LUXURY_THEME.textSecondary, fontWeight: expiryColor ? 600 : 400 }}>{fmtExpiry(b.expiry)}</td>
                     <td style={{ padding: "12px 16px" }}><Badge color={b.color} bg={b.bg}>{b.label}</Badge></td>
                     <td style={{ padding: "12px 16px", fontSize: 12, color: LUXURY_THEME.textMuted }}>{b.location}</td>
                     <td style={{ padding: "12px 16px", fontWeight: 600, fontSize: 12, color: b.status !== "ok" ? "#DC2626" : LUXURY_THEME.textSecondary }}>KES {b.lossValue.toLocaleString()}</td>

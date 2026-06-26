@@ -133,7 +133,7 @@ export default function Permissions({ currentUser, toast }) {
                 <td colSpan={ROLES.length + 1} style={{ padding: "10px 20px", fontSize: 10, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1.2, borderTop: gi > 0 ? `1px solid ${C.border}` : "none" }}>
                   {group.group}
                 </td>
-              <tr>
+              </tr>
 
               {/* Permission rows */}
               {group.perms.map((perm, pi) => (

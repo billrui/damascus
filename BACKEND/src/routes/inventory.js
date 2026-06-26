@@ -58,6 +58,12 @@ const issueSchema = z.object({
   notes:          z.string().max(500).optional(),
 });
 
+const produceSchema = z.object({
+  menu_item_id: z.string().min(1),
+  batches:      z.coerce.number().positive(),
+  notes:        z.string().max(500).optional(),
+});
+
 const wastageSchema = z.object({
   ingredient_id: z.string().min(1),
   batch_id:      z.string().optional(),
@@ -287,6 +293,104 @@ router.post('/issues', requirePermission('inventory'), validate(issueSchema), as
     });
 
     res.status(201).json({ issue });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /api/inventory/produce ──────────────────────────────────────────────
+// "Produce N batches of <menu item>": deducts that item's recipe ingredients
+// (recipe qty × batches) from store via FEFO. Each ingredient is recorded as a
+// kitchen issue, so it shows in Recent Issues and feeds day-end variance.
+router.post('/produce', requirePermission('inventory'), validate(produceSchema), async (req, res, next) => {
+  try {
+    const { menu_item_id, batches } = req.body;
+
+    const result = await db.transaction(async (client) => {
+      // Fetch the item + its recipe
+      const { rows: itemRows } = await client.query(
+        `SELECT m.name, COALESCE(m.batch_size, 1) AS batch_size,
+                COALESCE(json_agg(json_build_object('ingredient_id', r.ingredient_id, 'qty', r.qty))
+                         FILTER (WHERE r.ingredient_id IS NOT NULL), '[]') AS recipe
+           FROM menu_items m
+           LEFT JOIN recipes r ON r.menu_item_id = m.id
+          WHERE m.id = $1
+          GROUP BY m.id, m.name, m.batch_size`,
+        [menu_item_id]
+      );
+      if (!itemRows[0]) throw Object.assign(new Error('Menu item not found'), { status: 404 });
+      const itemName  = itemRows[0].name;
+      const batchSize = Number(itemRows[0].batch_size) || 1;
+      const recipe    = itemRows[0].recipe || [];
+      if (!recipe.length) throw Object.assign(new Error('This item has no recipe, so there is nothing to deduct'), { status: 422 });
+
+      // Pass 1 — lock batches and verify EVERY ingredient has enough (all-or-nothing)
+      const plan = [];
+      for (const line of recipe) {
+        const need = Number(line.qty) * batches;
+        const { rows: bRows } = await client.query(
+          `SELECT id, remaining FROM batches
+            WHERE ingredient_id = $1 AND status = 'active' AND remaining > 0
+            ORDER BY expiry ASC NULLS LAST, created_at ASC
+            FOR UPDATE`,
+          [line.ingredient_id]
+        );
+        const avail = bRows.reduce((s, b) => s + Number(b.remaining), 0);
+        const { rows: ingRows } = await client.query(`SELECT name FROM ingredients WHERE id = $1`, [line.ingredient_id]);
+        const ingName = ingRows[0]?.name || line.ingredient_id;
+        if (avail < need) {
+          throw Object.assign(new Error(`Not enough ${ingName}: need ${need}, only ${avail} in stock`), { status: 422 });
+        }
+        plan.push({ ingredient_id: line.ingredient_id, ingName, need, bRows });
+      }
+
+      // Pass 2 — deduct FEFO and record one kitchen issue per ingredient
+      const deducted = [];
+      for (const p of plan) {
+        let needed = p.need;
+        let firstBatch = null;
+        for (const b of p.bRows) {
+          if (needed <= 0) break;
+          const take = Math.min(Number(b.remaining), needed);
+          await client.query(
+            `UPDATE batches
+                SET remaining  = remaining - $1,
+                    status     = CASE WHEN remaining - $1 <= 0 THEN 'depleted' ELSE status END,
+                    updated_at = now()
+              WHERE id = $2`,
+            [take, b.id]
+          );
+          if (!firstBatch) firstBatch = b.id;
+          needed -= take;
+        }
+        const issue_ref = await nextIssueRef(client);
+        await client.query(
+          `INSERT INTO store_issues
+             (issue_ref, issue_date, from_location, to_location, ingredient_id, batch_id, qty, issued_by)
+           VALUES ($1, CURRENT_DATE, 'Main Store', 'Kitchen', $2, $3, $4, $5)`,
+          [issue_ref, p.ingredient_id, firstBatch, p.need, req.user.sub]
+        );
+        deducted.push({ ingredient: p.ingName, qty: p.need });
+      }
+
+      // Add finished servings to prepared stock so the item list reflects it.
+      // servings = batches × batch_size (e.g. 1 batch of tea that "makes 100" → 100 cups)
+      const servings = batches * batchSize;
+      await client.query(
+        `INSERT INTO menu_item_stock (menu_item_id, qty_available)
+         VALUES ($1, $2)
+         ON CONFLICT (menu_item_id)
+         DO UPDATE SET qty_available = menu_item_stock.qty_available + $2, updated_at = now()`,
+        [menu_item_id, servings]
+      );
+      await client.query(
+        `INSERT INTO production_log (menu_item_id, qty_produced, produced_by, notes)
+         VALUES ($1, $2, $3, $4)`,
+        [menu_item_id, servings, req.user.sub, `Produced ${batches} batch(es) via Produce Batch`]
+      );
+
+      return { item: itemName, batches, servings, deducted };
+    });
+
+    res.status(201).json({ ok: true, ...result });
   } catch (err) { next(err); }
 });
 
