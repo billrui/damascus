@@ -39,6 +39,7 @@ const receiveBatchSchema = z.object({
   supplier_id:   z.string().optional(),
   location:      z.string().max(100).optional(),
   cost_per_unit: z.coerce.number().min(0).optional(),
+  container_size:z.coerce.number().positive().optional(),
   notes:         z.string().max(500).optional(),
 });
 
@@ -55,6 +56,7 @@ const issueSchema = z.object({
   qty:            z.coerce.number().positive(),
   from_location:  z.string().max(100).optional(),
   to_location:    z.string().max(100).default('Kitchen'),
+  container_size: z.coerce.number().positive().optional(),
   notes:          z.string().max(500).optional(),
 });
 
@@ -79,6 +81,7 @@ const ingredientSchema = z.object({
   category:      z.string().max(50).optional(),
   reorder_level: z.coerce.number().min(0).optional(),
   cost_per_unit: z.coerce.number().min(0).optional(),
+  issued_whole:  z.coerce.boolean().optional(),
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -132,7 +135,7 @@ router.get('/batches', requirePermission('inventory_readonly'), validateQuery(pa
 // ─── POST /api/inventory/batches — receive stock ──────────────────────────────
 router.post('/batches', requirePermission('inventory'), validate(receiveBatchSchema), async (req, res, next) => {
   try {
-    const { ingredient_id, batch_no, qty, expiry, supplier_id, location, cost_per_unit, notes } = req.body;
+    const { ingredient_id, batch_no, qty, expiry, supplier_id, location, cost_per_unit, container_size, notes } = req.body;
 
     // Auto-generate batch ID using timestamp to avoid collisions
     const newId = 'B' + Date.now().toString().slice(-8);
@@ -140,12 +143,12 @@ router.post('/batches', requirePermission('inventory'), validate(receiveBatchSch
     const { rows } = await db.query(
       `INSERT INTO batches
          (id, ingredient_id, batch_no, qty, remaining, expiry, supplier_id,
-          location, received_date, cost_per_unit, received_by, notes, status)
-       VALUES ($1,$2,$3,$4,$4,$5,$6,$7,CURRENT_DATE,$8,$9,$10,'active')
+          location, received_date, cost_per_unit, container_size, received_by, notes, status)
+       VALUES ($1,$2,$3,$4,$4,$5,$6,$7,CURRENT_DATE,$8,$9,$10,$11,'active')
        RETURNING *`,
       [newId, ingredient_id, batch_no || null, qty,
        expiry || null, supplier_id || null, location || 'Main Store',
-       cost_per_unit || null, req.user.sub, notes || null]
+       cost_per_unit || null, container_size || null, req.user.sub, notes || null]
     );
 
     await db.query(
@@ -238,19 +241,21 @@ router.get('/low-stock', requirePermission('inventory_readonly'), async (req, re
 // ─── POST /api/inventory/issues ───────────────────────────────────────────────
 router.post('/issues', requirePermission('inventory'), validate(issueSchema), async (req, res, next) => {
   try {
-    const { ingredient_id, batch_id, qty, from_location, to_location, notes } = req.body;
+    const { ingredient_id, batch_id, qty, from_location, to_location, container_size, notes } = req.body;
 
     const issue = await db.transaction(async (client) => {
       const issue_ref = await nextIssueRef(client);
 
-      // FEFO deduction across ALL active batches for this ingredient (earliest expiry first).
-      // (A single batch rarely holds the whole issued quantity, so we draw across batches.)
+      // FEFO deduction (earliest expiry first). When a container_size is given, draw
+      // ONLY from batches of that bottle size — so issuing a 5 L bottle never eats
+      // into the 1 L stack. Otherwise draw across all active batches.
       const { rows: batchRows } = await client.query(
         `SELECT id, remaining FROM batches
           WHERE ingredient_id = $1 AND status = 'active' AND remaining > 0
+            AND ($2::numeric IS NULL OR container_size = $2::numeric)
           ORDER BY expiry ASC NULLS LAST, created_at ASC
           FOR UPDATE`,
-        [ingredient_id]
+        [ingredient_id, container_size || null]
       );
       const totalAvail = batchRows.reduce((s, b) => s + Number(b.remaining), 0);
       if (totalAvail < qty) {
@@ -322,10 +327,25 @@ router.post('/produce', requirePermission('inventory'), validate(produceSchema),
       const recipe    = itemRows[0].recipe || [];
       if (!recipe.length) throw Object.assign(new Error('This item has no recipe, so there is nothing to deduct'), { status: 422 });
 
-      // Pass 1 — lock batches and verify EVERY ingredient has enough (all-or-nothing)
+      // Pass 1 — lock batches and verify EVERY ingredient has enough (all-or-nothing).
+      // Ingredients flagged issued_whole are handed to the kitchen via Issue Stock, so we
+      // skip deducting them here (they'd be double-counted), but still note them.
       const plan = [];
+      const skipped = [];
       for (const line of recipe) {
+        const { rows: ingRows } = await client.query(
+          `SELECT name, COALESCE(issued_whole, false) AS issued_whole FROM ingredients WHERE id = $1`,
+          [line.ingredient_id]
+        );
+        const ingName      = ingRows[0]?.name || line.ingredient_id;
+        const issuedWhole  = ingRows[0]?.issued_whole === true;
         const need = Number(line.qty) * batches;
+
+        if (issuedWhole) {
+          skipped.push({ ingredient: ingName, qty: need });
+          continue;  // not deducted from store here
+        }
+
         const { rows: bRows } = await client.query(
           `SELECT id, remaining FROM batches
             WHERE ingredient_id = $1 AND status = 'active' AND remaining > 0
@@ -334,8 +354,6 @@ router.post('/produce', requirePermission('inventory'), validate(produceSchema),
           [line.ingredient_id]
         );
         const avail = bRows.reduce((s, b) => s + Number(b.remaining), 0);
-        const { rows: ingRows } = await client.query(`SELECT name FROM ingredients WHERE id = $1`, [line.ingredient_id]);
-        const ingName = ingRows[0]?.name || line.ingredient_id;
         if (avail < need) {
           throw Object.assign(new Error(`Not enough ${ingName}: need ${need}, only ${avail} in stock`), { status: 422 });
         }
@@ -387,7 +405,7 @@ router.post('/produce', requirePermission('inventory'), validate(produceSchema),
         [menu_item_id, servings, req.user.sub, `Produced ${batches} batch(es) via Produce Batch`]
       );
 
-      return { item: itemName, batches, servings, deducted };
+      return { item: itemName, batches, servings, deducted, skipped };
     });
 
     res.status(201).json({ ok: true, ...result });
@@ -610,7 +628,7 @@ router.post('/ingredients', requirePermission('inventory'), validate(ingredientS
     }
 
     const { id, name, unit, category, reorder_level, cost_per_unit,
-              purchase_unit, purchase_qty, purchase_cost } = req.body;
+              purchase_unit, purchase_qty, purchase_cost, issued_whole } = req.body;
 
     // Auto-calculate cost_per_unit from bulk purchase info if provided
     // e.g. bought 1kg (1000g) for KES 120 → cost_per_unit = 0.12/g
@@ -619,11 +637,11 @@ router.post('/ingredients', requirePermission('inventory'), validate(ingredientS
       : cost_per_unit || null;
 
     const { rows } = await db.query(
-      `INSERT INTO ingredients (id, name, unit, category, reorder_level, cost_per_unit)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO ingredients (id, name, unit, category, reorder_level, cost_per_unit, issued_whole)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (id) DO NOTHING
        RETURNING *`,
-      [id, name, unit || null, category || null, reorder_level || null, cost_per_unit || null]
+      [id, name, unit || null, category || null, reorder_level || null, cost_per_unit || null, issued_whole === true]
     );
 
     if (!rows[0]) return res.status(409).json({ error: `Ingredient '${id}' already exists` });
@@ -635,7 +653,7 @@ router.post('/ingredients', requirePermission('inventory'), validate(ingredientS
 // ─── PATCH /api/inventory/ingredients/:id ─────────────────────────────────────
 router.patch('/ingredients/:id', requirePermission('inventory'), async (req, res, next) => {
   try {
-    const { name, unit, category, reorder_level, cost_per_unit, purchase_unit, purchase_qty, purchase_cost } = req.body;
+    const { name, unit, category, reorder_level, cost_per_unit, purchase_unit, purchase_qty, purchase_cost, issued_whole } = req.body;
 
     // If name is changing, check no duplicate
     if (name) {
@@ -657,11 +675,13 @@ router.patch('/ingredients/:id', requirePermission('inventory'), async (req, res
         category      = COALESCE($3, category),
         reorder_level = COALESCE($4, reorder_level),
         cost_per_unit = COALESCE($5, cost_per_unit),
+        issued_whole  = COALESCE($7, issued_whole),
         updated_at    = now()
        WHERE id = $6 RETURNING *`,
       [name||null, unit||null, category||null,
        reorder_level!=null ? parseFloat(reorder_level) : null,
-       resolvedCost||null, req.params.id]
+       resolvedCost||null, req.params.id,
+       issued_whole === undefined ? null : (issued_whole === true)]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Ingredient not found' });
     res.json({ ingredient: rows[0] });
@@ -670,22 +690,51 @@ router.patch('/ingredients/:id', requirePermission('inventory'), async (req, res
 
 // ─── DELETE /api/inventory/ingredients/:id ────────────────────────────────────
 router.delete('/ingredients/:id', requirePermission('inventory'), async (req, res, next) => {
+  const id = req.params.id;
+  const force = req.query.force === 'true';
   try {
-    // Check if ingredient has any active batches
-    const { rows: batches } = await db.query(
-      `SELECT COUNT(*) FROM batches WHERE ingredient_id = $1 AND status = 'active'`,
-      [req.params.id]
-    );
-    if (parseInt(batches[0].count) > 0) {
-      return res.status(409).json({ error: 'Cannot delete — ingredient has active stock. Deplete or write off all batches first.' });
+    if (!force) {
+      // Real stock = remaining quantity in active batches (empty batches don't count)
+      const { rows: s } = await db.query(
+        `SELECT COALESCE(SUM(remaining),0) AS live FROM batches WHERE ingredient_id = $1 AND status = 'active'`,
+        [id]
+      );
+      const live = parseFloat(s[0].live) || 0;
+
+      const { rows: r } = await db.query(
+        `SELECT COUNT(*) AS uses FROM recipes WHERE ingredient_id = $1`, [id]
+      );
+      const recipeUses = parseInt(r[0].uses, 10);
+
+      if (live > 0) {
+        return res.status(409).json({ error: 'Cannot delete — this ingredient still has stock in store. Issue or write off its stock first.', canForce: true });
+      }
+      if (recipeUses > 0) {
+        return res.status(409).json({ error: `Cannot delete — this ingredient is used in ${recipeUses} recipe(s). Remove it from those recipes first.`, canForce: true });
+      }
     }
-    const { rows } = await db.query(
-      `DELETE FROM ingredients WHERE id = $1 RETURNING id, name`,
-      [req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Ingredient not found' });
-    res.json({ deleted: rows[0] });
-  } catch (err) { next(err); }
+
+    // force=true OR (no stock + no recipes) → remove it and its records
+    // (old deliveries, issues, wastage, recipe links) so the delete isn't blocked.
+    const deleted = await db.transaction(async (client) => {
+      await client.query(`DELETE FROM store_issues WHERE ingredient_id = $1`, [id]);
+      await client.query(`DELETE FROM wastage      WHERE ingredient_id = $1`, [id]);
+      await client.query(`DELETE FROM batches      WHERE ingredient_id = $1`, [id]);
+      await client.query(`DELETE FROM recipes      WHERE ingredient_id = $1`, [id]);
+      const { rows } = await client.query(
+        `DELETE FROM ingredients WHERE id = $1 RETURNING id, name`, [id]
+      );
+      return rows[0];
+    });
+
+    if (!deleted) return res.status(404).json({ error: 'Ingredient not found' });
+    res.json({ deleted });
+  } catch (err) {
+    if (err && err.code === '23503') {
+      return res.status(409).json({ error: 'Cannot delete — this ingredient is still linked to other records. Clear those first.' });
+    }
+    next(err);
+  }
 });
 
 export default router;

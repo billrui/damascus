@@ -9,12 +9,29 @@ const _CATS  = ["Proteins","Grains","Vegetables","Oils","Spices","Dairy","Bevera
 const fmtStock = (n) => String(Math.round(parseFloat(n)||0));
 // Quantities (recipe amounts, deductions) keep fractions like 0.25 / 0.5 but show whole numbers cleanly
 const fmtQty = (n) => { const f = parseFloat(n) || 0; return Number.isInteger(f) ? String(f) : String(parseFloat(f.toFixed(3))); };
+
+// Container presets for receiving stock — multiplier converts ONE container to the
+// ingredient's base (cooking) unit. e.g. base unit "ml": a 5 L can = 5000.
+const containerOptions = (unit) => {
+  const u = (unit || "").toLowerCase().trim().replace(/\.$/, "");
+  const direct = { label: `${unit || "unit"} — type total`, mult: 1, direct: true };
+  const isMl  = ["ml","mls","milliliter","millilitre","milliliters","millilitres","cc"].includes(u);
+  const isL   = ["l","ltr","litre","liter","litres","liters"].includes(u);
+  const isG   = ["g","gm","gms","gram","grams","gramme","grammes"].includes(u);
+  const isKg  = ["kg","kgs","kilo","kilos","kilogram","kilograms","kgm"].includes(u);
+  if (isMl)  return [direct, {label:"250 ml",mult:250},{label:"500 ml",mult:500},{label:"1 L",mult:1000},{label:"2 L",mult:2000},{label:"3 L",mult:3000},{label:"5 L",mult:5000},{label:"10 L",mult:10000},{label:"20 L",mult:20000}];
+  if (isL)   return [direct,{label:"1 L",mult:1},{label:"2 L",mult:2},{label:"3 L",mult:3},{label:"5 L",mult:5},{label:"10 L",mult:10},{label:"20 L",mult:20}];
+  if (isG)   return [direct,{label:"50 g",mult:50},{label:"100 g",mult:100},{label:"200 g",mult:200},{label:"250 g",mult:250},{label:"500 g",mult:500},{label:"1 kg",mult:1000},{label:"2 kg",mult:2000},{label:"5 kg",mult:5000},{label:"10 kg",mult:10000},{label:"25 kg",mult:25000}];
+  if (isKg)  return [direct,{label:"1 kg",mult:1},{label:"2 kg",mult:2},{label:"5 kg",mult:5},{label:"10 kg",mult:10},{label:"25 kg",mult:25},{label:"50 kg",mult:50}];
+  // pieces / bottle / can / sachet / slice etc — counted whole
+  return [{ label: `${unit || "piece"} (each)`, mult: 1, direct: true }];
+};
 const _UNITS = ["g","kg","ml","l","pcs","loaf","tray","slice","bunch","bottle","can","packet","box","bundle","crate","sack","jerrycan","tin","bar","roll","bag","sachet","cup"];
 
 // --- AddIngredientModal ---
 function AddIngredientModal({ onClose, onSaved }) {
   const { mobile } = useBreakpoint();
-  const [form, setForm] = useState({ name:"", unit:"g", category:"", reorder_level:"", purchase_unit:"", purchase_qty:"", purchase_cost:"", opening_stock:"" });
+  const [form, setForm] = useState({ name:"", unit:"g", category:"", reorder_level:"", purchase_unit:"", purchase_qty:"", purchase_cost:"", opening_stock:"", issued_whole:false });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
   const set = (k,v) => setForm(p => ({ ...p, [k]:v }));
@@ -41,6 +58,7 @@ function AddIngredientModal({ onClose, onSaved }) {
         purchase_qty:  parseFloat(form.purchase_qty)||null,
         purchase_cost: parseFloat(form.purchase_cost)||null,
         cost_per_unit: parseFloat(costPerUnit)||0,
+        issued_whole: form.issued_whole === true,
       });
       if (form.opening_stock && parseFloat(form.opening_stock) > 0) {
         const pQty = parseFloat(form.purchase_qty) || 1;
@@ -84,6 +102,15 @@ function AddIngredientModal({ onClose, onSaved }) {
             <select value={form.unit} onChange={e=>set("unit",e.target.value)} style={{ ...fi, marginTop:4 }}>
               {_UNITS.map(u => <option key={u}>{u}</option>)}
             </select>
+          </div>
+          <div style={{ gridColumn:"1/-1", borderTop:"1px solid #F0EDE6", paddingTop:10, marginTop:4 }}>
+            <label style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer" }}>
+              <input type="checkbox" checked={form.issued_whole} onChange={e=>set("issued_whole", e.target.checked)} style={{ marginTop:2, width:15, height:15, flexShrink:0 }} />
+              <span>
+                <span style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>Issued to kitchen as a whole unit</span>
+                <span style={{ display:"block", fontSize:10.5, color:"#9CA3AF", marginTop:2 }}>Tick for bulk items like cooking oil, salt or flour that you hand over whole via Issue Stock. Produce Batch won't deduct these again (avoids double-counting), but they still count toward dish cost.</span>
+              </span>
+            </label>
           </div>
           <div style={{ gridColumn:"1/-1", borderTop:"1px solid #F0EDE6", paddingTop:10, marginTop:4 }}>
             <div style={{ fontSize:9, fontWeight:600, color:"#C5A059", textTransform:"uppercase", marginBottom:6 }}>How you buy it</div>
@@ -148,8 +175,9 @@ function EditIngredientModal({ ingredient, onClose, onSaved }) {
     name:          ingredient.name || "",
     unit:          ingredient.unit || "g",
     category:      ingredient.category || "",
-    reorder_level: String(ingredient.reorderLevel || ingredient.reorder_level || ""),
-    cost_per_unit: String(ingredient.costPerUnit || ingredient.cost_per_unit || ""),
+    reorder_level: (() => { const v = parseFloat(ingredient.reorderLevel ?? ingredient.reorder_level); return Number.isFinite(v) ? String(v) : ""; })(),
+    cost_per_unit: (() => { const v = parseFloat(ingredient.costPerUnit ?? ingredient.cost_per_unit); return Number.isFinite(v) ? String(v) : ""; })(),
+    issued_whole:  (ingredient.issuedWhole ?? ingredient.issued_whole) === true,
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
@@ -166,6 +194,7 @@ function EditIngredientModal({ ingredient, onClose, onSaved }) {
         category:      form.category,
         reorder_level: parseFloat(form.reorder_level) || 0,
         cost_per_unit: parseFloat(form.cost_per_unit) || 0,
+        issued_whole:  form.issued_whole === true,
       });
       onSaved(updated);
     } catch(e) { setError(e?.response?.data?.error || "Save failed"); }
@@ -208,6 +237,13 @@ function EditIngredientModal({ ingredient, onClose, onSaved }) {
               <input type="number" min="0" step="0.01" value={form.reorder_level} onChange={e=>set("reorder_level",e.target.value)} style={{ ...fi, marginTop:4 }} />
             </div>
           </div>
+          <label style={{ display:"flex", alignItems:"flex-start", gap:8, cursor:"pointer", borderTop:"1px solid #F0EDE6", paddingTop:12, marginTop:2 }}>
+            <input type="checkbox" checked={form.issued_whole} onChange={e=>set("issued_whole", e.target.checked)} style={{ marginTop:2, width:15, height:15, flexShrink:0 }} />
+            <span>
+              <span style={{ fontSize:12, fontWeight:600, color:"#1A1A1A" }}>Issued to kitchen as a whole unit</span>
+              <span style={{ display:"block", fontSize:10.5, color:"#9CA3AF", marginTop:2 }}>For bulk items like cooking oil, salt or flour handed over whole. Produce Batch won't deduct these again — still counted for cost.</span>
+            </span>
+          </label>
         </div>
         <div style={{ display:"flex", gap:10, marginTop:20 }}>
           <button onClick={onClose} style={{ padding:"10px 16px", borderRadius:4, border:"1px solid #E5E0D5", background:"#FFF", color:"#7A7A7A", fontWeight:600, fontSize:12, cursor:"pointer" }}>Cancel</button>
@@ -224,14 +260,16 @@ function EditIngredientModal({ ingredient, onClose, onSaved }) {
 function DeleteConfirmModal({ ingredient, onClose, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
   const [error,    setError]    = useState("");
+  const [canForce, setCanForce] = useState(false);
 
-  const del = async () => {
+  const del = async (force=false) => {
     setDeleting(true); setError("");
     try {
-      await inventoryApi.deleteIngredient(ingredient.id);
+      await inventoryApi.deleteIngredient(ingredient.id, force);
       onDeleted(ingredient.id);
     } catch(e) {
       setError(e?.response?.data?.error || "Delete failed");
+      if (e?.response?.data?.canForce) setCanForce(true);
     } finally { setDeleting(false); }
   };
 
@@ -240,14 +278,22 @@ function DeleteConfirmModal({ ingredient, onClose, onDeleted }) {
       <div style={{ background:"#FFF", borderRadius:8, padding:28, width:400, maxWidth:"95vw", boxShadow:"0 8px 32px rgba(0,0,0,0.2)" }}>
         <div style={{ fontSize:15, fontWeight:600, color:"#1A1A1A", marginBottom:8 }}>Delete "{ingredient.name}"?</div>
         <div style={{ fontSize:12, color:"#7A7A7A", marginBottom:20 }}>
-          This cannot be undone. Ingredients with active stock batches cannot be deleted.
+          {canForce
+            ? "This item has stock or recipe links. \u201CDelete anyway\u201D will permanently remove it AND its stock, delivery, and recipe records. This cannot be undone."
+            : "This cannot be undone. Empty items delete cleanly; items with stock or recipes will ask you to confirm a full delete."}
         </div>
         {error && <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:14 }}>{error}</div>}
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={onClose} style={{ flex:1, padding:"10px", borderRadius:4, border:"1px solid #E5E0D5", background:"#FFF", color:"#7A7A7A", fontWeight:600, fontSize:12, cursor:"pointer" }}>Cancel</button>
-          <button onClick={del} disabled={deleting} style={{ flex:1, padding:"10px", borderRadius:4, border:"none", background:deleting?"#9CA3AF":"#DC2626", color:"#FFF", fontWeight:600, fontSize:12, cursor:"pointer" }}>
-            {deleting ? "Deleting..." : "Yes, Delete"}
-          </button>
+          {canForce ? (
+            <button onClick={()=>del(true)} disabled={deleting} style={{ flex:1, padding:"10px", borderRadius:4, border:"none", background:deleting?"#9CA3AF":"#B91C1C", color:"#FFF", fontWeight:700, fontSize:12, cursor:"pointer" }}>
+              {deleting ? "Deleting..." : "Delete anyway"}
+            </button>
+          ) : (
+            <button onClick={()=>del(false)} disabled={deleting} style={{ flex:1, padding:"10px", borderRadius:4, border:"none", background:deleting?"#9CA3AF":"#DC2626", color:"#FFF", fontWeight:600, fontSize:12, cursor:"pointer" }}>
+              {deleting ? "Deleting..." : "Yes, Delete"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -286,7 +332,8 @@ export function ProduceBatchView({ batches, setBatches, ingredients: propIngredi
     const unit = r.unit || ing?.unit || "";
     const need = (parseFloat(r.qty) || 0) * n;
     const have = stockOf(r.ingredient_id);
-    return { name, unit, need, have, short: have < need };
+    const issuedWhole = (ing?.issuedWhole ?? ing?.issued_whole) === true;
+    return { name, unit, need, have, issuedWhole, short: !issuedWhole && have < need };
   });
   const anyShort = lines.some(l => l.short);
 
@@ -395,14 +442,20 @@ export function ProduceBatchView({ batches, setBatches, ingredients: propIngredi
                   <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:16 }}>
                     {lines.map((l, i) => (
                       <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:12.5, padding:"9px 12px", borderRadius:6,
-                        background: l.short ? "#FEF2F2" : "#FAF8F3", border:`1px solid ${l.short ? "#FECACA" : "#EFE9DD"}` }}>
-                        <span style={{ fontWeight:600, color:"#1A1A1A" }}>{l.name}</span>
-                        <span style={{ display:"flex", gap:12, alignItems:"center" }}>
-                          <span style={{ fontFamily:"monospace", color:"#8B3A3A", fontWeight:600 }}>−{fmtQty(l.need)} {l.unit}</span>
-                          <span style={{ fontSize:10, color: l.short ? "#DC2626" : "#9CA3AF" }}>
-                            {l.short ? `short (have ${fmtQty(l.have)})` : `have ${fmtQty(l.have)}`}
+                        background: l.issuedWhole ? "#F8F8F8" : l.short ? "#FEF2F2" : "#FAF8F3",
+                        border:`1px solid ${l.issuedWhole ? "#ECECEC" : l.short ? "#FECACA" : "#EFE9DD"}`,
+                        opacity: l.issuedWhole ? 0.7 : 1 }}>
+                        <span style={{ fontWeight:600, color: l.issuedWhole ? "#9CA3AF" : "#1A1A1A" }}>{l.name}</span>
+                        {l.issuedWhole ? (
+                          <span style={{ fontSize:10, color:"#9CA3AF", fontStyle:"italic" }}>issued separately — not deducted</span>
+                        ) : (
+                          <span style={{ display:"flex", gap:12, alignItems:"center" }}>
+                            <span style={{ fontFamily:"monospace", color:"#8B3A3A", fontWeight:600 }}>−{fmtQty(l.need)} {l.unit}</span>
+                            <span style={{ fontSize:10, color: l.short ? "#DC2626" : "#9CA3AF" }}>
+                              {l.short ? `short (have ${fmtQty(l.have)})` : `have ${fmtQty(l.have)}`}
+                            </span>
                           </span>
-                        </span>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -641,6 +694,28 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
                           <div style={{ fontSize:11, color:"#9CA3AF", padding:"8px 0" }}>No active batches in stock.</div>
                         ) : (
                           <div style={{ display:"flex", flexDirection:"column", gap:4, paddingTop:6 }}>
+                            {(() => {
+                              // Group container batches by bottle size → count of whole bottles
+                              const groups = {};
+                              ing.activeBatches.forEach(b => {
+                                const sz = Number(b.containerSize ?? b.container_size);
+                                if (sz > 0) { groups[sz] = (groups[sz]||0) + Number(b.remaining||0); }
+                              });
+                              const sizes = Object.keys(groups).map(Number).sort((a,b)=>a-b);
+                              if (!sizes.length) return null;
+                              return (
+                                <div style={{ marginBottom:8, padding:"8px 10px", background:"#FBF7EE", border:"1px solid #EFE4CC", borderRadius:6 }}>
+                                  <div style={{ fontSize:9, fontWeight:700, color:"#8A7B5C", textTransform:"uppercase", letterSpacing:1, marginBottom:5 }}>Containers in store</div>
+                                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                                    {sizes.map(sz => (
+                                      <span key={sz} style={{ fontSize:12, fontWeight:600, color:"#1A1A1A", background:"#FFF", border:"1px solid #EFE4CC", borderRadius:5, padding:"4px 10px" }}>
+                                        {fmtQty(sz)} {ing.unit} ×&nbsp;<span style={{ color:"#C5A059", fontWeight:800 }}>{fmtQty(groups[sz]/sz)}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             <div style={{ fontSize:9, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Batches — used first-expired-first (FEFO)</div>
                             {ing.activeBatches.map((b, bi) => {
                               const dleft = Math.round((new Date(b.expiry) - new Date()) / 86400000);
@@ -655,7 +730,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
                                   <span style={{ color:dColor, fontWeight:600 }}>
                                     {isNaN(dleft) ? "" : dleft < 0 ? `expired ${Math.abs(dleft)}d ago` : dleft === 0 ? "expires today" : `${dleft}d left`}
                                   </span>
-                                  {(b.batchNo||b.batch_no) && <span style={{ color:"#B0A99A", fontSize:10, marginLeft:"auto" }}>{b.batchNo||b.batch_no}</span>}
+                                  {(b.batchNo||b.batch_no) && <span style={{ color:"#8A7B5C", fontSize:10, fontWeight:600, marginLeft:"auto", background:"#FBF7EE", border:"1px solid #EFE4CC", borderRadius:5, padding:"2px 7px" }}>{b.batchNo||b.batch_no}</span>}
                                 </div>
                               );
                             })}
@@ -679,6 +754,7 @@ export function InventoryView({ batches, setBatches, ingredients: propIngredient
 export function InventoryReadOnlyView({ batches, ingredients }) {
   const { mobile } = useBreakpoint();
   const [search,    setSearch]    = useState("");
+  const [sizeView,  setSizeView]  = useState({}); // { ingredientId: size | "all" }
   const [liveStock, setLiveStock] = useState(null); // null = use prop batches
   const today = new Date();
 
@@ -713,15 +789,40 @@ export function InventoryReadOnlyView({ batches, ingredients }) {
               const reorder = i.reorderLevel || i.reorder_level || 0;
               const isLow = stock > 0 && stock <= reorder;
               const isOut = stock <= 0;
+              // Container sizes held for this item (whole-bottle tracking)
+              const myBatches = activeBatches.filter(b=>(b.ingredientId||b.ingredient_id)===bId&&b.status==="active");
+              const sizeGroups = {};
+              myBatches.forEach(b => { const sz = Number(b.containerSize??b.container_size); if (sz>0) sizeGroups[sz] = (sizeGroups[sz]||0) + Number(b.remaining||0); });
+              const sizes = Object.keys(sizeGroups).map(Number).sort((a,b)=>a-b);
+              const hasContainers = sizes.length > 0;
+              const sel = sizeView[i.id] || "all";
               return (
                 <tr key={i.id} style={{ borderBottom:"1px solid #F0EDE6", background:idx%2===0?"#FFF":"#FAFAFA" }}>
                   <td style={{ padding:"10px 16px", fontSize:12, fontWeight:600 }}>{i.name}</td>
                   <td style={{ padding:"10px 16px", fontSize:12, color:"#7A7A7A" }}>{i.category}</td>
                   <td style={{ padding:"10px 16px", fontSize:12, fontFamily:"monospace", fontWeight:600, color: isOut?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>
-                    {stock} {isOut&&<span style={{fontSize:10,background:"#FEF2F2",color:"#DC2626",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>OUT</span>}
-                    {isLow&&!isOut&&<span style={{fontSize:10,background:"#FFFBEB",color:"#B8860B",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>LOW</span>}
+                    {hasContainers ? (
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                        <select value={sel} onChange={e=>setSizeView(p=>({...p,[i.id]:e.target.value}))}
+                          style={{ padding:"4px 8px", border:"1px solid #E5E0D5", borderRadius:4, fontSize:11, fontFamily:"inherit" }}>
+                          <option value="all">All sizes</option>
+                          {sizes.map(sz => <option key={sz} value={sz}>{fmtQty(sz)} {i.unit}</option>)}
+                        </select>
+                        <span>{sel === "all" ? `${stock} ${i.unit}` : `${fmtQty(sizeGroups[Number(sel)])} ${i.unit}`}</span>
+                        {isOut&&<span style={{fontSize:10,background:"#FEF2F2",color:"#DC2626",padding:"1px 6px",borderRadius:4,fontWeight:700}}>OUT</span>}
+                      </div>
+                    ) : (
+                      <>
+                        {stock} {isOut&&<span style={{fontSize:10,background:"#FEF2F2",color:"#DC2626",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>OUT</span>}
+                        {isLow&&!isOut&&<span style={{fontSize:10,background:"#FFFBEB",color:"#B8860B",padding:"1px 6px",borderRadius:4,fontWeight:700,marginLeft:4}}>LOW</span>}
+                      </>
+                    )}
                   </td>
-                  <td style={{ padding:"10px 16px", fontSize:12, color:"#7A7A7A" }}>{i.unit}</td>
+                  <td style={{ padding:"10px 16px", fontSize:12, color:"#7A7A7A" }}>
+                    {hasContainers && sel !== "all"
+                      ? <span style={{ fontWeight:700, color:"#1A1A1A" }}><span style={{ color:"#C5A059", fontWeight:800 }}>{fmtQty(sizeGroups[Number(sel)]/Number(sel))}</span> × {fmtQty(Number(sel))} {i.unit} bottles</span>
+                      : i.unit}
+                  </td>
                   <td style={{ padding:"10px 16px", fontSize:11, color:"#9CA3AF" }}>{reorder>0?`Reorder at ${fmtQty(reorder)}`:"-"}</td>
                 </tr>
               );
@@ -746,7 +847,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
     return name ? `${name} - ${date} ${time}` : `${date} ${time}`;
   };
   const [selected, setSelected] = useState(null);
-  const [form, setForm]         = useState({ batchNo:"", qty:"", costPerUnit:"", expiry:"", location:"Main Store" });
+  const [form, setForm]         = useState({ batchNo:"", qty:"", costPerUnit:"", expiry:"", location:"Main Store", containerMult:1, containerIdx:0 });
   const [search, setSearch]     = useState("");
   const [saving, setSaving]     = useState(false);
   const [saved,  setSaved]      = useState(false);
@@ -759,7 +860,7 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
 
   const pick = (ing) => {
     setSelected(ing);
-    setForm({ batchNo:genBatchNo(ing), qty:"", costPerUnit:String(ing.costPerUnit||ing.cost_per_unit||""), expiry:"", location:"Main Store" });
+    setForm({ batchNo:genBatchNo(ing), qty:"", costPerUnit:(()=>{const v=parseFloat(ing.costPerUnit??ing.cost_per_unit);return Number.isFinite(v)?String(v):"";})(), expiry:"", location:"Main Store", containerMult:1, containerIdx:0 });
     setError(""); setSaved(false);
   };
 
@@ -772,21 +873,37 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
       const pUnit = selected.purchase_unit || selected.purchaseUnit;
       const pQty  = parseFloat(selected.purchase_qty || selected.purchaseQty) || 0;
       const hasPU = pUnit && pQty > 0;
-      // Convert purchase units to cooking units (e.g. 3 loaves × 20 = 60 slices)
-      const stockQty = hasPU ? Number(form.qty) * pQty : Number(form.qty);
+      const opts  = containerOptions(selected.unit);
+      const cIdx  = Math.min(form.containerIdx ?? 0, opts.length - 1);
+      const curOpt = opts[cIdx] || opts[0];
+      const usingContainer = curOpt && !curOpt.direct;
+      const cMult = curOpt?.mult || 1;
+      // Container picker takes priority: N containers × size = base-unit total.
+      // Otherwise fall back to the ingredient's purchase-unit conversion.
+      const stockQty = usingContainer ? Number(form.qty) * cMult
+                      : hasPU         ? Number(form.qty) * pQty
+                      :                 Number(form.qty);
       // Cost per cooking unit = cost per purchase unit ÷ units per purchase
-      const costPerCookingUnit = hasPU && form.costPerUnit ? Number(form.costPerUnit) / pQty : Number(form.costPerUnit)||undefined;
+      const costPerCookingUnit = hasPU && !usingContainer && form.costPerUnit ? Number(form.costPerUnit) / pQty : Number(form.costPerUnit)||undefined;
+      // Label the delivery by its container so the stock breakdown shows
+      // "3 × 5 L" rather than a merged litres figure.
+      const dn = new Date();
+      const dtStamp = `${dn.getDate()}/${dn.getMonth()+1}/${dn.getFullYear()} ${String(dn.getHours()).padStart(2,"0")}:${String(dn.getMinutes()).padStart(2,"0")}`;
+      const batchLabel = usingContainer
+        ? `${selected.name} · ${fmtQty(form.qty)} × ${curOpt.label} · ${dtStamp}`
+        : (form.batchNo || genBatchNo(selected));
       const batch = await inventoryApi.receiveBatch({
         ingredient_id: selected.id,
-        batch_no:      form.batchNo || genBatchNo(selected),
+        batch_no:      batchLabel,
         qty:           stockQty,
         expiry:        form.expiry||undefined,
         location:      form.location,
         cost_per_unit: costPerCookingUnit,
+        container_size: usingContainer ? cMult : undefined,
       });
-      setBatches(p=>[...p,{ id:batch.id, ingredientId:batch.ingredient_id, batchNo:batch.batch_no, qty:batch.qty, remaining:batch.remaining, expiry:batch.expiry, location:batch.location, status:"active" }]);
+      setBatches(p=>[...p,{ id:batch.id, ingredientId:batch.ingredient_id, ingredient_id:batch.ingredient_id, batchNo:batch.batch_no, batch_no:batch.batch_no, qty:batch.qty, remaining:batch.remaining, expiry:batch.expiry, location:batch.location, container_size:batch.container_size, containerSize:batch.container_size, status:"active" }]);
       setSaved(true); setSelected(null);
-      setForm({ batchNo:"", qty:"", costPerUnit:"", expiry:"", location:"Main Store" });
+      setForm({ batchNo:"", qty:"", costPerUnit:"", expiry:"", location:"Main Store", containerMult:1, containerIdx:0 });
       setTimeout(()=>setSaved(false), 3000);
     } catch(e) { setError(JSON.stringify(e?.response?.data) || e?.message || "Save failed");
     } finally { setSaving(false); }
@@ -847,21 +964,35 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
               <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
                 <div>
                   {(() => {
+                    const opts  = containerOptions(selected.unit);
+                    const idx   = Math.min(form.containerIdx ?? 0, opts.length - 1);
+                    const curOpt = opts[idx] || opts[0];
+                    const cMult = curOpt?.mult || 1;
+                    const usingContainer = curOpt && !curOpt.direct;
                     const pUnit = selected.purchase_unit || selected.purchaseUnit;
                     const pQty  = parseFloat(selected.purchase_qty || selected.purchaseQty) || 0;
-                    const inSlices = pUnit && pQty && form.qty ? (parseFloat(form.qty)||0) * pQty : null;
+                    const baseTotal = usingContainer ? (parseFloat(form.qty)||0) * cMult
+                                     : (pUnit && pQty && form.qty ? (parseFloat(form.qty)||0) * pQty : null);
                     return (
                       <>
+                        {opts.length > 1 && (
+                          <div style={{ marginBottom:12 }}>
+                            <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Received in</label>
+                            <select value={idx} onChange={e=>{ const i = parseInt(e.target.value)||0; setForm(f=>({...f, containerIdx:i, containerMult: opts[i]?.mult || 1 })); }} style={{ ...fi, marginTop:4 }}>
+                              {opts.map((o,i) => <option key={i} value={i}>{o.label}</option>)}
+                            </select>
+                          </div>
+                        )}
                         <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>
-                          Quantity Received ({pUnit && pQty ? pUnit : selected.unit}) *
+                          {usingContainer ? `Number of ${curOpt.label} containers *` : `Quantity Received (${pUnit && pQty ? pUnit : selected.unit}) *`}
                         </label>
                         <input type="number" min="0" step="0.001" value={form.qty}
                           onChange={e=>setForm(f=>({...f,qty:e.target.value}))}
-                          placeholder={pUnit && pQty ? `e.g. 5 ${pUnit}s` : `e.g. 5 ${selected.unit}`}
+                          placeholder={usingContainer ? `e.g. 5 × ${curOpt.label}` : (pUnit && pQty ? `e.g. 5 ${pUnit}s` : `e.g. 5 ${selected.unit}`)}
                           style={{ ...fi, marginTop:4, fontSize:16, fontWeight:600 }} autoFocus />
-                        {inSlices!==null && (
+                        {baseTotal!==null && baseTotal>0 && (
                           <div style={{ fontSize:11, color:"#2E7D64", marginTop:4, fontWeight:600 }}>
-                            = {inSlices} {selected.unit} will be added to stock
+                            = {fmtQty(baseTotal)} {selected.unit} will be added to stock
                           </div>
                         )}
                       </>
@@ -893,8 +1024,25 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                   <div>
                     <label style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5 }}>Total Value</label>
                     <div style={{ marginTop:4, padding:"8px 12px", background:"#F8F8F8", border:"1px solid #E5E0D5", borderRadius:4, fontSize:13, fontWeight:600, color:"#1A1A1A" }}>
-                      {form.qty&&form.costPerUnit ? "KES "+(Number(form.qty)*Number(form.costPerUnit)).toFixed(2) : "-"}
-                      {(()=>{ const pu=selected.purchase_unit||selected.purchaseUnit; const pq=parseFloat(selected.purchase_qty||selected.purchaseQty)||0; return pu&&pq&&form.qty&&form.costPerUnit ? <div style={{fontSize:10,color:"#7A7A7A",marginTop:2}}>{(Number(form.qty)*pq).toFixed(0)} {selected.unit} total</div> : null; })()}
+                      {(() => {
+                        const opts  = containerOptions(selected.unit);
+                        const cIdx  = Math.min(form.containerIdx ?? 0, opts.length - 1);
+                        const curOpt = opts[cIdx] || opts[0];
+                        const usingContainer = curOpt && !curOpt.direct;
+                        const cMult = curOpt?.mult || 1;
+                        const pu = selected.purchase_unit||selected.purchaseUnit;
+                        const pq = parseFloat(selected.purchase_qty||selected.purchaseQty)||0;
+                        const baseTotal = usingContainer ? (parseFloat(form.qty)||0)*cMult
+                                         : (pu&&pq) ? (parseFloat(form.qty)||0)*pq
+                                         : (parseFloat(form.qty)||0);
+                        if (!form.qty || !form.costPerUnit) return "-";
+                        return (
+                          <>
+                            KES {(baseTotal * Number(form.costPerUnit)).toFixed(0)}
+                            {(usingContainer || (pu&&pq)) && <div style={{fontSize:10,color:"#7A7A7A",marginTop:2}}>{fmtQty(baseTotal)} {selected.unit} total</div>}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -917,10 +1065,19 @@ export function ReceiveStockView({ batches, setBatches, ingredients: propIngredi
                 <button onClick={submit} disabled={saving}
                   style={{ padding:"12px", borderRadius:6, border:"none", background:saving?"#9CA3AF":"linear-gradient(135deg,#1A1A1A,#C5A059)", color:"#FFF", fontWeight:600, fontSize:13, cursor:saving?"default":"pointer" }}>
                   {saving ? "Recording..." : (() => {
+                    const opts  = containerOptions(selected.unit);
+                    const idx   = Math.min(form.containerIdx ?? 0, opts.length - 1);
+                    const curOpt = opts[idx] || opts[0];
+                    const cMult = curOpt?.mult || 1;
+                    const usingContainer = curOpt && !curOpt.direct;
                     const pu = selected.purchase_unit||selected.purchaseUnit;
                     const pq = parseFloat(selected.purchase_qty||selected.purchaseQty)||0;
+                    if (usingContainer) {
+                      const total = (parseFloat(form.qty)||0) * cMult;
+                      return `Record: ${form.qty||"?"} × ${curOpt.label} of ${selected.name} (= ${fmtQty(total)} ${selected.unit})`;
+                    }
                     return pu&&pq
-                      ? `Record: ${form.qty||"?"} ${pu} of ${selected.name} (= ${(parseFloat(form.qty)||0)*pq} ${selected.unit})`
+                      ? `Record: ${form.qty||"?"} ${pu} of ${selected.name} (= ${fmtQty((parseFloat(form.qty)||0)*pq)} ${selected.unit})`
                       : `Record: ${form.qty||"?"} ${selected.unit} of ${selected.name}`;
                   })()}
                 </button>
@@ -957,6 +1114,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
 
   const [search,   setSearch]   = useState("");
   const [qtys,     setQtys]     = useState({});   // { ingredientId: qtyString }
+  const [cont,     setCont]     = useState({});   // { ingredientId: containerIdx }
   const [saving,   setSaving]   = useState(false);
   const [saved,    setSaved]    = useState(false);
   const [errors,   setErrors]   = useState({});
@@ -979,16 +1137,27 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
 
   const hasQtys = Object.values(qtys).some(v=>Number(v)>0);
 
+  // Resolve the container choice for a row → base-unit multiplier
+  const contInfo = (ing) => {
+    const opts = containerOptions(ing.unit);
+    const i    = Math.min(cont[ing.id] ?? 0, opts.length - 1);
+    const o    = opts[i] || opts[0];
+    return { opts, idx:i, curOpt:o, mult:o?.mult || 1, usingContainer: o && !o.direct };
+  };
+
   const submitAll = async () => {
     const toIssue = filtered.filter(i=>Number(qtys[i.id])>0);
     if (!toIssue.length) return;
 
-    // Validate
+    // Validate (convert container count → base units before comparing to stock)
     const errs = {};
     toIssue.forEach(ing=>{
-      const qty = Number(qtys[ing.id]);
-      const avail = totalAvail(ing.id);
-      if (qty > avail) errs[ing.id] = `Max ${fmtStock(avail)} ${ing.unit}`;
+      const { mult, usingContainer } = contInfo(ing);
+      const qty = Number(qtys[ing.id]) * mult;
+      const avail = usingContainer
+        ? batches.filter(b => (b.ingredientId??b.ingredient_id)===ing.id && b.status==="active" && Number(b.containerSize??b.container_size)===mult).reduce((s,b)=>s+Number(b.remaining||0),0)
+        : totalAvail(ing.id);
+      if (qty > avail) errs[ing.id] = usingContainer ? `Only ${fmtQty(avail/mult)} in store` : `Max ${fmtStock(avail)} ${ing.unit}`;
     });
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
@@ -997,8 +1166,10 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
     let anyFailed = false;
 
     for (const ing of toIssue) {
-      const qty = Number(qtys[ing.id]);
-      const eligible = availBatches(ing.id);
+      const { mult, usingContainer } = contInfo(ing);
+      const qty = Number(qtys[ing.id]) * mult;
+      let eligible = availBatches(ing.id);
+      if (usingContainer) eligible = eligible.filter(b => Number(b.containerSize ?? b.container_size) === mult);
       if (!eligible.length) continue;
       try {
         await inventoryApi.recordIssue({
@@ -1007,6 +1178,7 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
           qty,
           from_location: "Main Store",
           to_location:   dest,
+          container_size: usingContainer ? mult : undefined,
           notes:         notes || undefined,
         });
         // Deduct FEFO
@@ -1109,29 +1281,60 @@ export function IssueStockView({ batches, setBatches, storeIssues, setStoreIssue
                     </td>
                     <td style={{ padding:"10px 12px", color:"#7A7A7A", fontSize:11 }}>{ing.unit}</td>
                     <td style={{ padding:"10px 12px" }}>
-                      <span style={{ fontWeight:600, color:noStock?"#DC2626":isLow?"#B8860B":"#2E7D64" }}>
-                        {noStock?"OUT":Math.round(avail)}
-                      </span>
+                      {(() => {
+                        const { mult, usingContainer, curOpt } = contInfo(ing);
+                        if (usingContainer) {
+                          const sizeAvail = batches.filter(b => (b.ingredientId??b.ingredient_id)===ing.id && b.status==="active" && Number(b.containerSize??b.container_size)===mult).reduce((s,b)=>s+Number(b.remaining||0),0);
+                          const count = sizeAvail / mult;
+                          return (
+                            <span style={{ color: count<=0?"#DC2626":count<=2?"#B8860B":"#2E7D64" }}>
+                              <span style={{ fontWeight:800, fontSize:15 }}>{fmtQty(count)}</span>
+                              <span style={{ fontSize:11, fontWeight:600 }}> × {curOpt.label}</span>
+                              {count<=0 && <span style={{ display:"block", fontSize:10, color:"#9CA3AF" }}>none of this size</span>}
+                            </span>
+                          );
+                        }
+                        if (noStock) return <span style={{ fontWeight:600, color:"#DC2626" }}>OUT</span>;
+                        return <span style={{ fontWeight:600, color: isLow?"#B8860B":"#2E7D64" }}>{Math.round(avail)}</span>;
+                      })()}
                     </td>
-                    <td style={{ padding:"6px 12px", width:140 }}>
-                      <input
-                        type="number" min="0" step="0.001"
-                        value={qty}
-                        disabled={noStock}
-                        onChange={e=>{
-                          setQtys(p=>({...p,[ing.id]:e.target.value}));
-                          setErrors(p=>({...p,[ing.id]:undefined}));
-                        }}
-                        placeholder="0"
-                        style={{
-                          ...fi, padding:"7px 10px", fontSize:14, fontWeight:hasQty?700:400,
-                          width:"100%", boxSizing:"border-box",
-                          border:`1px solid ${err?"#FECACA":hasQty?"#C5A059":"#E5E0D5"}`,
-                          background:noStock?"#F5F5F5":"#FFFFFF",
-                          color:hasQty?"#C5A059":"#1A1A1A",
-                        }}
-                      />
-                      {err && <div style={{ fontSize:10, color:"#DC2626", marginTop:2 }}>{err}</div>}
+                    <td style={{ padding:"6px 12px", width:200 }}>
+                      {(() => {
+                        const { opts, idx:cIdx, curOpt, mult, usingContainer } = contInfo(ing);
+                        const baseQty = (parseFloat(qty)||0) * mult;
+                        return (
+                          <>
+                            {opts.length > 1 && (
+                              <select value={cIdx} disabled={noStock}
+                                onChange={e=>setCont(p=>({...p,[ing.id]: parseInt(e.target.value)||0}))}
+                                style={{ ...fi, padding:"5px 8px", fontSize:11, width:"100%", boxSizing:"border-box", marginBottom:5 }}>
+                                {opts.map((o,i) => <option key={i} value={i}>{o.label}</option>)}
+                              </select>
+                            )}
+                            <input
+                              type="number" min="0" step="0.001"
+                              value={qty}
+                              disabled={noStock}
+                              onChange={e=>{
+                                setQtys(p=>({...p,[ing.id]:e.target.value}));
+                                setErrors(p=>({...p,[ing.id]:undefined}));
+                              }}
+                              placeholder={usingContainer ? `# of ${curOpt.label}` : "0"}
+                              style={{
+                                ...fi, padding:"7px 10px", fontSize:14, fontWeight:hasQty?700:400,
+                                width:"100%", boxSizing:"border-box",
+                                border:`1px solid ${err?"#FECACA":hasQty?"#C5A059":"#E5E0D5"}`,
+                                background:noStock?"#F5F5F5":"#FFFFFF",
+                                color:hasQty?"#C5A059":"#1A1A1A",
+                              }}
+                            />
+                            {usingContainer && hasQty && (
+                              <div style={{ fontSize:10, color:"#2E7D64", marginTop:3, fontWeight:600 }}>= {fmtQty(baseQty)} {ing.unit}</div>
+                            )}
+                            {err && <div style={{ fontSize:10, color:"#DC2626", marginTop:2 }}>{err}</div>}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding:"10px 12px", width:80 }}>
                       {hasQty && (

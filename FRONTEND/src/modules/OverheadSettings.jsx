@@ -28,9 +28,9 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
   const [saving,      setSaving]      = useState(false);
   const [saved,       setSaved]       = useState(false);
   const [error,       setError]       = useState("");
+  const [editing,     setEditing]     = useState(false);
 
-  useEffect(() => {
-    settingsApi.get().then(s => {
+  const loadSettings = () => settingsApi.get().then(s => {
       const f = {}, c = {};
       FIXED.forEach(x => { f[x.key] = s[`overhead_fixed_${x.key}`] || ""; });
       CONSUMABLES.forEach(x => {
@@ -45,7 +45,8 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
         try { setStaff(JSON.parse(s.staff_salaries)); } catch {}
       }
     }).catch(() => setError("Could not load settings"));
-  }, []);
+
+  useEffect(() => { loadSettings(); }, []);
 
   const fixedDaily      = FIXED.reduce((s, f) => s + (parseFloat(fixed[f.key]) || 0) / 30, 0);
   const consumableDaily = CONSUMABLES.reduce((s, c) => {
@@ -73,6 +74,7 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
       payload.staff_salaries = JSON.stringify(staff.filter(e => e.name));
       await settingsApi.update(payload);
       setSaved(true);
+      setEditing(false);
       setTimeout(() => setSaved(false), 2500);
     } catch(e) {
       setError(e?.response?.data?.error || "Save failed");
@@ -99,6 +101,63 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
 
       {error && <div style={{ padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:6, fontSize:12, color:"#DC2626", marginBottom:16 }}>{error}</div>}
 
+      {/* ── READ-ONLY SUMMARY (default view) ── */}
+      {!editing && (
+        <div style={{ maxWidth:900 }}>
+          {showConsumables && (
+            <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:8, marginBottom:16 }}>
+              {CONSUMABLES.map(c => {
+                const cost = parseFloat(consumables[c.key]?.cost) || 0;
+                const days = parseFloat(consumables[c.key]?.days) || 0;
+                const daily = days > 0 ? cost / days : 0;
+                return (
+                  <div key={c.key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", borderBottom:`1px solid #F1F5F9` }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{c.label}</div>
+                      <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>
+                        {cost > 0 ? `KES ${cost.toLocaleString()} per ${c.unit} · lasts ${days||"-"} day${days===1?"":"s"}` : "Not set"}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight:700, color:G, fontSize:14 }}>KES {daily.toFixed(0)}<span style={{ fontSize:11, fontWeight:400, color:MUTED }}>/day</span></div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {showFixed && (
+            <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:8, marginBottom:16 }}>
+              {FIXED.map(f => {
+                const monthly = parseFloat(fixed[f.key]) || 0;
+                const daily = monthly / 30;
+                return (
+                  <div key={f.key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", borderBottom:`1px solid #F1F5F9` }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{f.label}</div>
+                      <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>{monthly > 0 ? `KES ${monthly.toLocaleString()} / month` : "Not set"}</div>
+                    </div>
+                    <div style={{ fontWeight:700, color:G, fontSize:14 }}>KES {daily.toFixed(0)}<span style={{ fontSize:11, fontWeight:400, color:MUTED }}>/day</span></div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {showStaff && (
+            <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:8, marginBottom:16 }}>
+              {staff.filter(e => e.name).length === 0 ? (
+                <div style={{ padding:"12px 14px", fontSize:12, color:MUTED }}>No staff salaries set</div>
+              ) : staff.filter(e => e.name).map((e, i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", borderBottom:`1px solid #F1F5F9` }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{e.name}</div>
+                  <div style={{ fontSize:12, color:MUTED }}>KES {(parseFloat(e.salary)||0).toLocaleString()}/month · <span style={{ color:G, fontWeight:700 }}>KES {((parseFloat(e.salary)||0)/30).toFixed(0)}/day</span></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── EDITABLE FORM ── */}
+      {editing && (<>
       <div style={{ display:"grid", gridTemplateColumns: (showFixed && showConsumables) ? "1fr 1fr" : "1fr", gap:20, maxWidth:900 }}>
 
         {/* Fixed Monthly */}
@@ -186,6 +245,7 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
         </div>
       </div>
       )}
+      </>)}
 
       {/* Total Summary */}
       <div style={{ maxWidth:900, marginTop:16, padding:"16px 20px", background:B, borderRadius:8, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -198,10 +258,21 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
         <div style={{ fontSize:28, fontWeight:800, color:"#fff" }}>KES {(mode === "utilities" ? consumableDaily : mode === "overheads" ? (fixedDaily + staffDaily) : totalDaily).toFixed(0)}<span style={{ fontSize:14, fontWeight:400, color:"rgba(255,255,255,0.6)" }}>/day</span></div>
       </div>
 
-      <div style={{ maxWidth:900, marginTop:16 }}>
-        <button onClick={save} disabled={saving} style={{ padding:"12px 32px", borderRadius:6, border:"none", background: saved ? G : saving ? "#9CA3AF" : B, color:"#FFF", fontWeight:600, fontSize:14, cursor: saving ? "default" : "pointer" }}>
-          {saved ? "✓ Saved" : saving ? "Saving..." : (mode === "utilities" ? "Save Utilities" : mode === "overheads" ? "Save Overheads" : "Save Overhead Settings")}
-        </button>
+      <div style={{ maxWidth:900, marginTop:16, display:"flex", gap:10 }}>
+        {!editing ? (
+          <button onClick={() => { setEditing(true); setSaved(false); }} style={{ padding:"12px 32px", borderRadius:6, border:`1px solid ${B}`, background:"#FFF", color:B, fontWeight:600, fontSize:14, cursor:"pointer" }}>
+            ✎ Edit {mode === "utilities" ? "Utilities" : mode === "overheads" ? "Overheads" : "Settings"}
+          </button>
+        ) : (
+          <>
+            <button onClick={save} disabled={saving} style={{ padding:"12px 32px", borderRadius:6, border:"none", background: saved ? G : saving ? "#9CA3AF" : B, color:"#FFF", fontWeight:600, fontSize:14, cursor: saving ? "default" : "pointer" }}>
+              {saved ? "✓ Saved" : saving ? "Saving..." : (mode === "utilities" ? "Save Utilities" : mode === "overheads" ? "Save Overheads" : "Save Overhead Settings")}
+            </button>
+            <button onClick={() => { setEditing(false); setError(""); loadSettings(); }} disabled={saving} style={{ padding:"12px 24px", borderRadius:6, border:`1px solid ${BORDER}`, background:"#FFF", color:MUTED, fontWeight:600, fontSize:14, cursor:"pointer" }}>
+              Cancel
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

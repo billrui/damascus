@@ -59,7 +59,7 @@ export const inventoryApi = {
   ingredients:  (params = {}) => api.get("/inventory/ingredients", { params }).then(r => r.data.ingredients),
   addIngredient:   (data)         => api.post("/inventory/ingredients", data).then(r => r.data.ingredient),
   updateIngredient:(id, data)     => api.patch(`/inventory/ingredients/${id}`, data).then(r => r.data.ingredient),
-  deleteIngredient:(id)           => api.delete(`/inventory/ingredients/${id}`).then(r => r.data),
+  deleteIngredient:(id, force=false) => api.delete(`/inventory/ingredients/${id}${force ? "?force=true" : ""}`).then(r => r.data),
 
   // Batches
   batches:      (params = {}) => api.get("/inventory/batches",    { params }).then(r => r.data),
