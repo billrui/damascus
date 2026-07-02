@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { classifyExpiry } from "../utils";
+import { inventoryApi } from "../api";
 
 const G = "#16a34a", R = "#DC2626", A = "#D97706", B = "#1E3A5F", MUTED = "#6B7280", BORDER = "#E5E7EB";
 
@@ -29,6 +30,16 @@ function Section({ title, children }) {
 export default function DashboardView({ sales = [], batches = [], storeIssues = [], wastage = [], setActiveNav, ingredients = [], menuItems = [], holdList = [], overhead = {}, user }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+
+  const isAdmin = user?.role === "admin";
+  const [log, setLog] = useState(null);
+  useEffect(() => {
+    if (!isAdmin) return;
+    let on = true;
+    inventoryApi.dailyLog().then(d => { if (on) setLog(d); }).catch(() => {});
+    const t = setInterval(() => { inventoryApi.dailyLog().then(d => { if (on) setLog(d); }).catch(() => {}); }, 60000);
+    return () => { on = false; clearInterval(t); };
+  }, [isAdmin]);
 
   const todayStr = now.toISOString().split("T")[0];
   const todaySales = sales.filter(s => s.date === todayStr);
@@ -244,6 +255,50 @@ export default function DashboardView({ sales = [], batches = [], storeIssues = 
                 <div style={{ fontSize: 11, color: MUTED }}>{wastageToday.length} entries recorded</div>
               </div>
               <span style={{ fontSize: 12, color: R, fontWeight: 700 }}>View →</span>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* Today's Activity Log — admin only */}
+      {isAdmin && (
+        <Section title="Today's Activity Log">
+          {!log ? (
+            <div style={{ fontSize:12, color:MUTED, padding:"8px 0" }}>Loading today's activity…</div>
+          ) : (log.received.length === 0 && log.issued.length === 0 && log.produced.length === 0) ? (
+            <div style={{ fontSize:12, color:MUTED, padding:"8px 0" }}>No stock received, issued, or produced yet today.</div>
+          ) : (
+            <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+              <div style={{ flex:1, minWidth:230, background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:14 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:G, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>Received ({log.received.length})</div>
+                {log.received.length === 0 ? <div style={{ fontSize:11, color:MUTED }}>—</div> :
+                  log.received.map(r => (
+                    <div key={r.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12, padding:"5px 0", borderBottom:`1px solid #F3F4F6` }}>
+                      <span style={{ color:"#111827" }}>{r.ingredient}</span>
+                      <span style={{ color:G, fontWeight:600, whiteSpace:"nowrap" }}>+{Number(r.qty).toLocaleString()} {r.unit}</span>
+                    </div>
+                  ))}
+              </div>
+              <div style={{ flex:1, minWidth:230, background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:14 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:A, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>Issued ({log.issued.length})</div>
+                {log.issued.length === 0 ? <div style={{ fontSize:11, color:MUTED }}>—</div> :
+                  log.issued.map(s => (
+                    <div key={s.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12, padding:"5px 0", borderBottom:`1px solid #F3F4F6` }}>
+                      <span style={{ color:"#111827" }}>{s.ingredient}<span style={{ color:MUTED, fontSize:10 }}> → {s.to_location || "Kitchen"}</span></span>
+                      <span style={{ color:A, fontWeight:600, whiteSpace:"nowrap" }}>−{Number(s.qty).toLocaleString()} {s.unit}</span>
+                    </div>
+                  ))}
+              </div>
+              <div style={{ flex:1, minWidth:230, background:"#fff", border:`1px solid ${BORDER}`, borderRadius:8, padding:14 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:B, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>Produced ({log.produced.length})</div>
+                {log.produced.length === 0 ? <div style={{ fontSize:11, color:MUTED }}>—</div> :
+                  log.produced.map(p => (
+                    <div key={p.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12, padding:"5px 0", borderBottom:`1px solid #F3F4F6` }}>
+                      <span style={{ color:"#111827" }}>{p.item}</span>
+                      <span style={{ color:B, fontWeight:600, whiteSpace:"nowrap" }}>{Number(p.qty_produced).toLocaleString()} made</span>
+                    </div>
+                  ))}
+              </div>
             </div>
           )}
         </Section>

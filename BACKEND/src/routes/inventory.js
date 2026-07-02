@@ -70,7 +70,7 @@ const wastageSchema = z.object({
   ingredient_id: z.string().min(1),
   batch_id:      z.string().optional(),
   qty:           z.coerce.number().positive(),
-  reason:        z.enum(['expired','spoilage','trimming','breakage','theft','other']),
+  reason:        z.enum(['expired','spoilage','trimming','breakage','theft','other','overcooked','returned','staff_meal']),
   notes:         z.string().max(500).optional(),
 });
 
@@ -412,6 +412,89 @@ router.post('/produce', requirePermission('inventory'), validate(produceSchema),
   } catch (err) { next(err); }
 });
 
+// ─── GET /api/inventory/variance-production ───────────────────────────────────
+// Dish-level variance from the production log — no recipes needed.
+// Compares units PRODUCED (kitchen log) vs units SOLD for a day.
+router.get('/variance-production', requirePermission(['variance', 'inventory_readonly']), async (req, res, next) => {
+  try {
+    const date = (req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
+      ? req.query.date : new Date().toISOString().slice(0, 10);
+    const { rows } = await db.query(
+      `WITH prod AS (
+         SELECT menu_item_id, SUM(qty_produced) AS produced
+           FROM production_log WHERE created_at::date = $1::date GROUP BY menu_item_id
+       ), sold AS (
+         SELECT si.menu_item_id, SUM(si.qty) AS sold
+           FROM sale_items si JOIN sales sa ON sa.id = si.sale_id AND sa.status = 'paid'
+          WHERE sa.sale_date = $1::date GROUP BY si.menu_item_id
+       )
+       SELECT m.id, m.name,
+              COALESCE(p.produced, 0) AS produced,
+              COALESCE(s.sold, 0)     AS sold
+         FROM menu_items m
+         LEFT JOIN prod p ON p.menu_item_id = m.id
+         LEFT JOIN sold s ON s.menu_item_id = m.id
+        WHERE COALESCE(p.produced, 0) > 0 OR COALESCE(s.sold, 0) > 0
+        ORDER BY m.name`,
+      [date]
+    );
+    const items = rows.map((r) => {
+      const produced = Number(r.produced), sold = Number(r.sold);
+      const diff = produced - sold;
+      let flag;
+      if (produced > 0 && sold === 0) flag = 'unsold';   // cooked, none sold
+      else if (diff > 0)              flag = 'over';      // leftover
+      else if (diff < 0)              flag = 'unlogged';  // sold but production not logged
+      else                            flag = 'ok';
+      return { id: r.id, name: r.name, produced, sold, diff, flag };
+    });
+    res.json({ date, items });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /api/inventory/daily-log ─────────────────────────────────────────────
+// Everything received, issued, and produced on a given day (default today).
+router.get('/daily-log', requirePermission('inventory_readonly'), async (req, res, next) => {
+  try {
+    const date = (req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)) ? req.query.date : null;
+    const dayExpr = date ? '$1::date' : 'CURRENT_DATE';
+    const params  = date ? [date] : [];
+
+    const received = (await db.query(
+      `SELECT b.id, b.batch_no, b.qty, b.container_size, b.created_at,
+              i.name AS ingredient, i.unit, u.name AS by_name
+         FROM batches b
+         JOIN ingredients i ON i.id = b.ingredient_id
+         LEFT JOIN users u ON u.id = b.received_by
+        WHERE b.created_at::date = ${dayExpr}
+        ORDER BY b.created_at DESC`, params)).rows;
+
+    const issued = (await db.query(
+      `SELECT si.id, si.issue_ref, si.qty, si.to_location, si.created_at,
+              i.name AS ingredient, i.unit, u.name AS by_name
+         FROM store_issues si
+         JOIN ingredients i ON i.id = si.ingredient_id
+         LEFT JOIN users u ON u.id = si.issued_by
+        WHERE si.created_at::date = ${dayExpr}
+        ORDER BY si.created_at DESC`, params)).rows;
+
+    const produced = (await db.query(
+      `SELECT p.id, p.qty_produced, p.created_at,
+              m.name AS item, u.name AS by_name
+         FROM production_log p
+         JOIN menu_items m ON m.id = p.menu_item_id
+         LEFT JOIN users u ON u.id = p.produced_by
+        WHERE p.created_at::date = ${dayExpr}
+        ORDER BY p.created_at DESC`, params)).rows;
+
+    res.json({
+      date: date || new Date().toISOString().slice(0, 10),
+      received, issued, produced,
+      totals: { received: received.length, issued: issued.length, produced: produced.length },
+    });
+  } catch (err) { next(err); }
+});
+
 // ─── GET /api/inventory/issues ────────────────────────────────────────────────
 router.get('/issues', requirePermission('inventory_readonly'), validateQuery(paginationSchema.extend({
   from: z.string().optional(),
@@ -503,10 +586,12 @@ router.get('/wastage', requirePermission('wastage'), validateQuery(paginationSch
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     const { rows } = await db.query(
-      `SELECT w.*, i.name AS ingredient_name, i.unit, u.name AS recorded_by_name
+      `SELECT w.*, i.name AS ingredient_name, i.unit, u.name AS recorded_by_name,
+              b.batch_no AS batch_no
        FROM wastage w
        JOIN ingredients i ON i.id = w.ingredient_id
        LEFT JOIN users u ON u.id = w.recorded_by
+       LEFT JOIN batches b ON b.id = w.batch_id
        ${where}
        ORDER BY w.wastage_date DESC
        LIMIT $${idx++} OFFSET $${idx++}`,

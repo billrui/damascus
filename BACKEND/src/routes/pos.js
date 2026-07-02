@@ -69,6 +69,7 @@ const createSaleSchema = z.object({
   payment_ref:  z.string().max(100).nullable().optional(),
   tendered:     z.coerce.number().optional(),
   discount_pct: z.coerce.number().min(0).max(100).default(0),
+  discount_amt: z.coerce.number().min(0).optional(), // absolute discount (overrides pct when provided)
   waiter_id:    z.coerce.number().int().optional(),
   shift_id:     z.coerce.number().int().optional(),
   offline_id:   z.string().max(100).optional(),    // for idempotency when syncing offline
@@ -106,7 +107,7 @@ router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSa
   try {
     const {
       items, customer, table_no, person, payment, payment_ref,
-      tendered, discount_pct, waiter_id, shift_id, offline_id, open_invoice_id,
+      tendered, discount_pct, discount_amt, waiter_id, shift_id, offline_id, open_invoice_id,
     } = req.body;
 
     // Idempotency: if this offline_id was already processed, return the existing sale
@@ -139,8 +140,16 @@ router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSa
       const price = i.unit_price || menuMap[i.menu_item_id]?.price || 0;
       return s + price * i.qty;
     }, 0);
-    const discount_amt = Math.round(subtotal * discount_pct / 100);
-    const total        = subtotal - discount_amt;
+    // Discount: an explicit amount (e.g. flat-KES Happy Hour) wins; otherwise use the percentage.
+    const discAmt = (discount_amt != null)
+      ? Math.min(Math.round(discount_amt), subtotal)
+      : Math.round(subtotal * discount_pct / 100);
+    const discPct = (discount_pct && discount_pct > 0)
+      ? discount_pct
+      : (subtotal > 0 ? +(discAmt / subtotal * 100).toFixed(2) : 0);
+    const discount_amt_final = discAmt;
+    const discount_pct_final = discPct;
+    const total        = subtotal - discAmt;
     const change_due   = tendered ? Math.max(0, tendered - total) : 0;
 
     // Run everything in a single transaction
@@ -166,7 +175,7 @@ router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSa
             $9, $10, $11, $12, $13, 'paid', $14)
          RETURNING *`,
         [invoice_id, customer, table_no || null, shift_id || null,
-         subtotal, discount_pct, discount_amt, total,
+         subtotal, discount_pct_final, discount_amt_final, total,
          payment, payment_ref || null, req.user.sub, waiter_id || null, offline_id || null,
          personLabel || null]
       );

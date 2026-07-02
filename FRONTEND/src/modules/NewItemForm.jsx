@@ -145,6 +145,7 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
   const [name,        setName]        = useState("");
   const [category,    setCategory]    = useState("");
   const [price,       setPrice]       = useState("");
+  const [cost,        setCost]        = useState("");
   const [description, setDescription] = useState("");
   const [bestseller,  setBestseller]  = useState(false);
   const [batchSize,   setBatchSize]   = useState(1);
@@ -184,16 +185,10 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
   const removeIngredient = (i)   => setRecipe(p => p.filter((_, idx) => idx !== i));
   const updateIngredient = (i, val) => setRecipe(p => p.map((r, idx) => idx === i ? { ...r, ...val } : r));
 
-  // Cost = ingredients only (per serving). Overheads/utilities live at day-end.
-  const batchCost      = recipe.reduce((sum, r) => {
-    const inv = inventory.find(i => i.id === r.ingredientId);
-    return sum + (parseFloat(r.qty) || 0) * (inv?.costPerUnit || 0);
-  }, 0);
-  const batchQty       = Math.max(1, parseInt(batchSize) || 1);
-  const costPerServing = batchCost / batchQty;
+  const cp             = parseFloat(cost) || 0;
   const sp             = parseFloat(price) || 0;
-  const profit         = sp > 0 ? sp - costPerServing : null;
-  const gp             = sp > 0 ? +((sp - costPerServing) / sp * 100).toFixed(1) : null;
+  const profit         = sp > 0 ? sp - cp : null;
+  const gp             = sp > 0 ? +((sp - cp) / sp * 100).toFixed(1) : null;
   const gpColor        = gp === null ? "#9CA3AF" : gp >= 60 ? "#16A34A" : gp >= 40 ? "#B8860B" : "#DC2626";
 
   const validate = () => {
@@ -210,20 +205,15 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
     setSaving(true); setApiError("");
     try {
       const id = "MI-" + name.replace(/\s+/g,"").toUpperCase().slice(0,6) + "-" + Date.now().toString().slice(-4);
-      const linkedRecipe = recipe
-        .filter(r => r.ingredientId && parseFloat(r.qty) > 0)
-        .map(r => ({ ingredient_id: r.ingredientId, qty: parseFloat(r.qty) }));
 
       const item = await itemsApi.create({
         id,
         name:        name.trim(),
-        batch_size:  batchQty,
         category:    category.toLowerCase().replace(/\s+/g,"-"),
         price:       parseFloat(price),
-        cost:        parseFloat(costPerServing.toFixed(4)) || undefined,
+        cost:        cp || undefined,
         description: description || undefined,
         bestseller,
-        recipe:      linkedRecipe,
       });
 
       setSaved(true);
@@ -242,14 +232,8 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
       <div style={{ background:"linear-gradient(135deg,#1A1A1A,#C5A059)", borderRadius:"10px 10px 0 0", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:15, fontWeight:600, color:"#FFF" }}>{name || "New Menu Item"}</div>
-          <div style={{ fontSize:10, color:"rgba(255,255,255,0.6)", marginTop:2 }}>Ingredients deduct from stock on every sale</div>
+          <div style={{ fontSize:10, color:"rgba(255,255,255,0.6)", marginTop:2 }}>Name, price and category — stock is handled separately</div>
         </div>
-        {gp !== null && (
-          <div style={{ background:"rgba(255,255,255,0.12)", borderRadius:8, padding:"6px 14px", textAlign:"center" }}>
-            <div style={{ fontSize:18, fontWeight:700, color: gp >= 40 ? "#86EFAC" : "#FCA5A5" }}>{gp}%</div>
-            <div style={{ fontSize:9, color:"rgba(255,255,255,0.6)" }}>Gross Profit</div>
-          </div>
-        )}
       </div>
 
       {/* Body */}
@@ -281,10 +265,6 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
                 style={{ ...fi, paddingLeft:46, borderColor: errors.price ? "#FCA5A5" : "#E5E0D5" }} />
             </div>
           </Field>
-          <Field label="Servings per batch" hint="One full recipe makes how many servings? e.g. 90 cups from 10 L tea">
-            <input type="number" min="1" step="1" value={batchSize} onChange={e => setBatchSize(e.target.value)}
-              placeholder="e.g. 90" style={fi} />
-          </Field>
           <div style={{ gridColumn:"1/-1" }}>
             <Field label="Description" hint="Optional — shown on the POS">
               <input value={description} onChange={e => setDescription(e.target.value)}
@@ -297,64 +277,6 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
           <input type="checkbox" checked={bestseller} onChange={e => setBestseller(e.target.checked)} style={{ accentColor:"#C5A059", width:14, height:14 }} />
           <span style={{ fontSize:12, color:"#4A4A4A", fontWeight:500 }}>Mark as Bestseller</span>
         </label>
-
-        {/* ── Recipe (ingredients only) ── */}
-        <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:6 }}>
-          <div style={{ fontSize:11, fontWeight:600, color:"#C5A059", letterSpacing:0.3, textTransform:"uppercase" }}>Recipe — Ingredients</div>
-          {linkedCount > 0 && <div style={{ fontSize:10, color:"#9CA3AF" }}>{linkedCount} linked · qty is for the whole batch ({batchQty} serving{batchQty>1?"s":""})</div>}
-        </div>
-
-        {/* Day-end note */}
-        <div style={{ display:"flex", gap:8, padding:"9px 12px", background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:8, fontSize:11, color:"#92400E", marginBottom:14 }}>
-          <span>⚡</span>
-          <span>Water, gas, charcoal and other overheads aren't added here — they're deducted once at day-end, shared across all sales (<strong>Settings → Daily Overheads</strong>).</span>
-        </div>
-
-        {/* Search to add */}
-        <AddIngredientSearch inventory={recipeStock} chosenIds={chosenIds} onAdd={addIngredient} />
-
-        {/* Linked ingredient cards */}
-        {recipe.length === 0 ? (
-          <div style={{ textAlign:"center", padding:"26px 16px", border:"1px dashed #E5E0D5", borderRadius:10, color:"#B0A99A", background:"#FCFBF8" }}>
-            <div style={{ fontSize:24, marginBottom:4 }}>🍲</div>
-            <div style={{ fontSize:12.5, fontWeight:600, color:"#7A7A7A" }}>No ingredients yet</div>
-            <div style={{ fontSize:11, marginTop:2 }}>Use the search above to add what this item is made of.</div>
-          </div>
-        ) : (
-          recipe.map((row, i) => (
-            <IngredientCard key={row._id} index={i} row={row}
-              invItem={inventory.find(x => x.id === row.ingredientId)}
-              onChange={updateIngredient} onRemove={removeIngredient} />
-          ))
-        )}
-
-        {/* Cost summary — ingredients only */}
-        {costPerServing > 0 && (
-          <div style={{ marginTop:16, padding:"14px 16px", background:"#FAF8F3", borderRadius:10, border:"1px solid #EFE9DD" }}>
-            <div style={{ fontSize:10, fontWeight:600, color:"#7A7A7A", textTransform:"uppercase", letterSpacing:0.5, marginBottom:12 }}>
-              Cost per serving — batch of {batchQty}
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:10 }}>
-              {[
-                { label:"Ingredient cost", val:"KES " + costPerServing.toFixed(2), color:"#1A1A1A" },
-                { label:"Selling price",   val: sp > 0 ? "KES " + sp.toFixed(2) : "—", color:"#1A1A1A" },
-                { label:"Profit / serving", val: profit !== null ? "KES " + profit.toFixed(2) : "—", color:gpColor },
-              ].map((c,k) => (
-                <div key={k} style={{ background:"#FFF", borderRadius:8, padding:"10px 12px", border:"1px solid #EFE9DD" }}>
-                  <div style={{ fontSize:9, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5 }}>{c.label}</div>
-                  <div style={{ fontSize:15, fontWeight:600, color:c.color, marginTop:3 }}>{c.val}</div>
-                </div>
-              ))}
-              <div style={{ background: gp >= 40 ? "#F0FDF4" : "#FEF2F2", borderRadius:8, padding:"10px 12px", border:`1px solid ${gp >= 40 ? "#86EFAC" : "#FECACA"}` }}>
-                <div style={{ fontSize:9, color: gpColor, textTransform:"uppercase", letterSpacing:0.5 }}>Gross profit</div>
-                <div style={{ fontSize:15, fontWeight:600, color: gpColor, marginTop:3 }}>{gp !== null ? gp + "%" : "—"}</div>
-              </div>
-            </div>
-            <div style={{ fontSize:11, color:"#9CA3AF" }}>
-              Before day-end overheads{dailyOH > 0 ? ` (KES ${Math.round(dailyOH)}/day, shared across all sales)` : ""}.
-            </div>
-          </div>
-        )}
 
         {/* Buttons */}
         <div style={{ display:"flex", gap:10, marginTop:22 }}>

@@ -448,6 +448,7 @@ export default function CashierPOS({ user, sales, setSales, batches, setBatches,
         tendered:    tenderedAmt,
         total,
         waiter_id:   selectedInv.waiter_id || null,
+        discount_amt: Math.round(selectedInv.discount || 0),
         shift_id:    activeShift?._dbId || activeShift?.id || null,
         open_invoice_id: (selectedInv.id != null && !isNaN(Number(selectedInv.id))) ? Number(selectedInv.id) : null,
       });

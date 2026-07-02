@@ -301,10 +301,7 @@ function ItemProfileModal({ item, onClose }) {
           {[
             ["Category", CATEGORY_MAP[item.category] || item.category], 
             ["Selling Price", `KES ${item.price?.toLocaleString()}`], 
-            ["Cost Price", `KES ${item.cost?.toLocaleString()}`], 
-            ["Margin", item.price ? `${((item.price - item.cost) / item.price * 100).toFixed(1)}%` : "-"], 
-            ["Bestseller", item.bestseller ? "Yes" : "No"], 
-            ["On Sale", item.onSale ? `Yes (was KES ${item.originalPrice})` : "No"]
+            ["Bestseller", item.bestseller ? "Yes" : "No"]
           ].map(([k, v]) => (
             <div key={k} style={{ 
               display: "flex", 
@@ -735,21 +732,14 @@ function EditItemModal({ item, onClose, onSave }) {
     if (!form.name.trim()) return;
     setSaving(true); setRecipeErr("");
     try {
-      // 1) save the recipe (replace)
-      const lines = recipe
-        .filter(r => r.ingredient_id && parseFloat(r.qty) > 0)
-        .map(r => ({ ingredient_id: r.ingredient_id, qty: parseFloat(r.qty) }));
-      await itemsApi.setRecipe(item.id, lines);
-      // 2) save the basic fields (parent handles update + close)
       await onSave({
         name: form.name.trim(), category: form.category,
-        price: parseFloat(form.price) || 0, cost: parseFloat(form.cost) || 0,
+        price: parseFloat(form.price) || 0,
         description: form.description, bestseller: form.bestseller,
-        on_sale: form.on_sale, original_price: form.on_sale ? (parseFloat(form.original_price) || 0) : null,
         active: form.active,
       });
     } catch (e) {
-      setRecipeErr(e?.response?.data?.error || "Couldn't save the recipe — try again.");
+      setRecipeErr(e?.response?.data?.error || "Couldn't save — try again.");
       setSaving(false);
     }
   };
@@ -788,95 +778,21 @@ function EditItemModal({ item, onClose, onSave }) {
               <label style={LBL}>Selling Price (KES)</label>
               <input type="number" value={form.price} onChange={e=>set("price",e.target.value)} style={INP} min={0} />
             </div>
-            <div>
-              <label style={LBL}>Cost Price (KES)</label>
-              <input type="number" value={form.cost} onChange={e=>set("cost",e.target.value)} style={INP} min={0} />
-            </div>
             <div style={{ gridColumn:"1/-1" }}>
               <label style={LBL}>Description</label>
               <textarea value={form.description} onChange={e=>set("description",e.target.value)}
                 style={{ ...INP, height:64, resize:"none" }} placeholder="Brief description" />
             </div>
             <div style={{ gridColumn:"1/-1", display:"flex", gap:24 }}>
-              {[{key:"bestseller",label:"Mark as Popular"},{key:"on_sale",label:"On Sale"}].map(({key,label})=>(
+              {[{key:"bestseller",label:"Mark as Popular"}].map(({key,label})=>(
                 <label key={key} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:13, color:"#333" }}>
                   <input type="checkbox" checked={form[key]} onChange={e=>set(key,e.target.checked)} style={{ width:15, height:15 }} />
                   {label}
                 </label>
               ))}
             </div>
-            {form.on_sale && (
-              <div style={{ gridColumn:"1/-1" }}>
-                <label style={LBL}>Original Price before sale (KES)</label>
-                <input type="number" value={form.original_price} onChange={e=>set("original_price",e.target.value)} style={INP} min={0} />
-              </div>
-            )}
           </div>
-          {margin && (
-            <div style={{ marginTop:14, padding:"10px 14px", background:"#F5F2EB", borderRadius:6, border:"1px solid #E5E0D5", fontSize:12, display:"flex", gap:20 }}>
-              <span style={{ color:"#555" }}>Margin: <strong style={{ color:"#2E7D64" }}>KES {(form.price-form.cost).toFixed(0)}</strong></span>
-              <span style={{ color:"#555" }}>Margin %: <strong style={{ color:"#2E7D64" }}>{margin}%</strong></span>
-            </div>
-          )}
-
-          {/* ── Recipe / Ingredients ── */}
-          <div style={{ marginTop:20, paddingTop:16, borderTop:"1px solid #EFE9DD" }}>
-            <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:8 }}>
-              <label style={{ ...LBL, marginBottom:0, color:"#C5A059" }}>Recipe — Ingredients (per batch)</label>
-              <span style={{ fontSize:10, color:"#9CA3AF" }}>{recipe.length} linked</span>
-            </div>
-
-            {recipeErr && <div style={{ padding:"7px 10px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:4, fontSize:11, color:"#8B3A3A", marginBottom:8 }}>{recipeErr}</div>}
-
-            {/* search to add */}
-            <div ref={dropRef} style={{ position:"relative", marginBottom:10 }}>
-              <input value={search} onChange={e=>{setSearch(e.target.value);setShowDrop(true);}} onFocus={()=>setShowDrop(true)}
-                placeholder="Search an ingredient to add..." style={{ ...INP, background:"#FEFCF8" }} />
-              {showDrop && matches.length > 0 && (
-                <div style={{ position:"absolute", top:"100%", left:0, right:0, marginTop:4, background:"#fff", border:"1px solid #E5E0D5", borderRadius:6, zIndex:5, boxShadow:"0 8px 24px rgba(0,0,0,0.1)", maxHeight:200, overflowY:"auto", padding:4 }}>
-                  {matches.map(inv => (
-                    <div key={inv.id} onMouseDown={()=>addLine(inv)}
-                      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 10px", cursor:"pointer", borderRadius:5 }}
-                      onMouseEnter={e=>e.currentTarget.style.background="#FEF9F0"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                      <span style={{ fontSize:12.5, fontWeight:600, color:"#1A1A1A" }}>{inv.name}</span>
-                      <span style={{ fontSize:10, color:"#9CA3AF" }}>{inv.unit} · KES {Math.round(inv.costPerUnit)}/{inv.unit}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* linked ingredient rows */}
-            {recipe.length === 0 ? (
-              <div style={{ textAlign:"center", padding:"18px", border:"1px dashed #E5E0D5", borderRadius:8, color:"#B0A99A", fontSize:12, background:"#FCFBF8" }}>
-                No ingredients linked. Use the search above to add them.
-              </div>
-            ) : recipe.map(r => {
-              const inv = inventory.find(i => i.id === r.ingredient_id);
-              const lineCost = (parseFloat(r.qty)||0) * (inv?.costPerUnit||0);
-              return (
-                <div key={r._id} style={{ display:"flex", alignItems:"center", gap:10, background:"#FFF", border:"1px solid #EFE9DD", borderRadius:8, padding:"8px 10px", marginBottom:6 }}>
-                  <div style={{ width:30, height:30, borderRadius:"50%", background:"#F0FDF4", border:"1px solid #86EFAC", color:"#16A34A", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 }}>
-                    {(r.name||"?").charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:13, fontWeight:600, color:"#1A1A1A", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.name}</div>
-                    {lineCost > 0 && <div style={{ fontSize:10, color:"#9CA3AF" }}>KES {Math.round(lineCost)} / batch</div>}
-                  </div>
-                  <div style={{ position:"relative", width:108, flexShrink:0 }}>
-                    <input type="number" min="0" step="0.001" value={r.qty} onChange={e=>setQty(r._id, e.target.value)} placeholder="0"
-                      style={{ ...INP, padding:"6px 34px 6px 8px", textAlign:"right" }} />
-                    <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontSize:10, color:"#9CA3AF", fontWeight:600, pointerEvents:"none" }}>{r.unit||""}</span>
-                  </div>
-                  <button onClick={()=>removeLine(r._id)} title="Remove"
-                    style={{ width:26, height:26, border:"none", borderRadius:5, background:"transparent", color:"#C7C2B6", cursor:"pointer", fontSize:16, flexShrink:0 }}
-                    onMouseEnter={e=>{e.currentTarget.style.background="#FEF2F2";e.currentTarget.style.color="#DC2626";}}
-                    onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="#C7C2B6";}}>×</button>
-                </div>
-              );
-            })}
-            <div style={{ fontSize:10.5, color:"#9CA3AF", marginTop:6 }}>Quantities are for one whole batch. Used for costing & day-end variance — not deducted per sale.</div>
-          </div>
+          {recipeErr && <div style={{ marginTop:14, padding:"8px 12px", background:"#FEF2F2", border:"1px solid #FECACA", borderRadius:6, fontSize:12, color:"#8B3A3A" }}>{recipeErr}</div>}
         </div>
         <div style={{ padding:"14px 22px", borderTop:"1px solid #E5E0D5", display:"flex", gap:10, background:"#FAFAF8" }}>
           <button onClick={onClose} style={{ padding:"9px 20px", border:"1px solid #E5E0D5", borderRadius:4, background:"#fff", color:"#555", cursor:"pointer", fontSize:13 }}>Cancel</button>
@@ -975,12 +891,6 @@ function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewIt
         <span style={{ fontSize:15, fontWeight:700, color:"#1A1A1A" }}>Items</span>
         <span style={{ fontSize:11, color:"#9CA3AF" }}>{filtered.length} item{filtered.length!==1?"s":""}</span>
         <div style={{ flex:1 }} />
-        {isAdmin && (
-        <button onClick={() => onNavigate?.("overheads")}
-          style={{ padding:"7px 14px", background:"#FFF", color:"#4A4A4A", border:"1px solid #E5E0D5", borderRadius:4, fontWeight:600, fontSize:11, cursor:"pointer" }}>
-          ⚙ Overheads
-        </button>
-        )}
         <button onClick={onNewItem}
           style={{ padding:"7px 14px", background:"#C5A059", color:"#fff", border:"none", borderRadius:4, fontWeight:600, fontSize:11, cursor:"pointer" }}>
           + New Item
@@ -1058,7 +968,7 @@ function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewIt
                       <td style={{ ...TD, fontWeight:600, color:"#2E7D64" }}>{Number(row.rPrice||0).toFixed(2)}</td>
                       <td style={TD}>
                         <span style={{ fontSize:10, padding:"2px 8px", borderRadius:3, fontWeight:600, background:row.active===false?"#FEF2F2":"#ECFDF5", color:row.active===false?"#8B3A3A":"#2E7D64" }}>
-                          {row.active===false ? "Inactive" : row.on_sale||row.onSale ? "On Sale" : "Active"}
+                          {row.active===false ? "Inactive" : "Active"}
                         </span>
                       </td>
                       <td style={TD}>
@@ -1222,7 +1132,6 @@ export default function ItemsView({ subView: propSubView = "new", batches, setBa
         />
       )}
       {subView === "produce"    && <ProductionScreen   onBack={() => { setLocalSubView(null); onNavigate?.("items:list"); }} />}
-      {subView === "overheads"  && <OverheadSettings   mode="overheads" onBack={() => { setLocalSubView(null); onNavigate?.("items:list"); }} />}
       {subView === "issue"   && <IssueStockView   batches={batches} setBatches={setBatches} storeIssues={storeIssues} setStoreIssues={setStoreIssues} user={user} />}
     </div>
   );

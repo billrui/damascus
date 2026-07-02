@@ -121,7 +121,7 @@ export async function generateReceiptPDF(sale, business) {
     if (sale.discount_amt && sale.discount_amt > 0) {
       doc.font('Helvetica').fontSize(7.5);
       row2(doc, 'Subtotal:', fmt(sale.subtotal));
-      row2(doc, `Discount (${sale.discount_pct}%):`, `-${fmt(sale.discount_amt)}`);
+      row2(doc, `Discount${sale.discount_pct > 0 ? ` (${Math.round(sale.discount_pct)}%)` : ''}:`, `-${fmt(sale.discount_amt)}`);
     }
 
     doc.font('Helvetica-Bold').fontSize(9);
@@ -255,6 +255,14 @@ export function generateEscPos(sale, business) {
   }
 
   line();
+
+  // Subtotal + discount (only when a discount was applied)
+  if (sale.discount_amt && sale.discount_amt > 0) {
+    const subLabel = 'Subtotal:';
+    text(subLabel + fmt(sale.subtotal).padStart(32 - subLabel.length)); nl();
+    const dLabel = `Discount${sale.discount_pct > 0 ? ` (${Math.round(sale.discount_pct)}%)` : ''}:`;
+    text(dLabel + ('-' + fmt(sale.discount_amt)).padStart(32 - dLabel.length)); nl();
+  }
 
   // Total
   push(ESC, 0x45, 0x01);    // bold

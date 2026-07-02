@@ -60,6 +60,7 @@ export const inventoryApi = {
   addIngredient:   (data)         => api.post("/inventory/ingredients", data).then(r => r.data.ingredient),
   updateIngredient:(id, data)     => api.patch(`/inventory/ingredients/${id}`, data).then(r => r.data.ingredient),
   deleteIngredient:(id, force=false) => api.delete(`/inventory/ingredients/${id}${force ? "?force=true" : ""}`).then(r => r.data),
+  dailyLog:       (date)          => api.get(`/inventory/daily-log${date ? `?date=${date}` : ""}`).then(r => r.data),
 
   // Batches
   batches:      (params = {}) => api.get("/inventory/batches",    { params }).then(r => r.data),
@@ -83,6 +84,7 @@ export const inventoryApi = {
 
   // Variance
   variance:     (params = {}) => api.get("/inventory/variance",   { params }).then(r => r.data),
+  varianceProduction: (params = {}) => api.get("/inventory/variance-production", { params }).then(r => r.data),
 
   // Suppliers
   suppliers:    ()             => api.get("/inventory/suppliers").then(r => r.data.suppliers),

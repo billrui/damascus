@@ -1,5 +1,6 @@
 import React from "react";
 import { T } from "../posTheme";
+import { posApi } from "../api";
 
 // Live ticking clock for the header (updates every 30s)
 function HeaderClock() {
@@ -437,9 +438,6 @@ export const Topbar = React.memo(function Topbar({ user, activeNav, setActiveNav
           {!mobile && activeNav==="pos" && user?.role==="cashier" && openInvCount>0 && (
             <Chip label="Open Invoices" count={openInvCount} color={C.secondary} icon="invoice"/>
           )}
-          {activeNav==="pos" && (user?.role==="admin"||user?.role==="manager") && (
-            <Chip label={mobile?"":"Hold List"} count={pendingHolds.length} color={C.warning} icon="hold" onClick={()=>setShowHoldModal?.(true)}/>
-          )}
 
           {/* User chip */}
           <div style={{
@@ -498,6 +496,22 @@ const Chip = React.memo(({ label, count, color, icon, onClick }) => (
 // --- HoldList Modal -----------------------------------------------------------
 const HoldListModal = React.memo(({ holdList, setHoldList, onClose }) => {
   const { mobile } = useBreakpoint();
+  const [delErr, setDelErr] = React.useState("");
+  const [busyId, setBusyId] = React.useState(null);
+
+  const removeHold = async (hold) => {
+    setDelErr(""); setBusyId(hold.id);
+    try {
+      await posApi.deleteHold(String(hold.id));          // server first — confirm it's gone
+      setHoldList?.(prev => prev.filter(h => String(h.id) !== String(hold.id)));
+    } catch (e) {
+      console.error("Delete hold failed:", e);
+      setDelErr(`Couldn't delete (${hold.table || "order"}): ${e?.response?.data?.error || e?.message || "server error"}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div onClick={onClose} style={{
       position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",
@@ -518,40 +532,48 @@ const HoldListModal = React.memo(({ holdList, setHoldList, onClose }) => {
           </div>
           <button onClick={onClose} style={{width:32,height:32,borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,color:C.textMuted,cursor:"pointer",fontSize:18,fontWeight:700}}>-</button>
         </div>
-        <div style={{overflowY:"auto",flex:1}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:T.font}}>
-            <thead>
-              <tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0}}>
-                {(mobile?["Table","Items","Total",""] : ["Table","Waiter","Items","Total","Time","Status",""]).map(h=>(
-                  <th key={h} style={{padding:mobile?"10px 12px":"12px 16px",textAlign:"left",fontWeight:700,color:C.textMuted,fontSize:11,textTransform:"uppercase",letterSpacing:1}}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {holdList.length===0 ? (
-                <tr><td colSpan="7" style={{padding:"60px 0",textAlign:"center"}}>
-                  <Icon name="hold" size={32} color={C.textMuted}/>
-                  <div style={{fontWeight:600,color:C.textSec,marginTop:12,fontSize:14}}>No orders on hold</div>
-                  <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Orders from waiters will appear here</div>
-                </td></tr>
-              ) : holdList.map((hold,i) => {
-                const sc = {pending:C.warning,billed:C.secondary,bumped:C.success}[hold.status]||C.textMuted;
-                return (
-                  <tr key={hold.id} style={{borderBottom:`1px solid ${C.border}`,background:i%2===0?C.bg:C.hover}}>
-                    <td style={{padding:mobile?"10px 12px":"12px 16px",fontWeight:700,color:C.primary}}>{hold.table}</td>
-                    {!mobile && <td style={{padding:"12px 16px",color:C.textSec}}>{hold.createdBy}</td>}
-                    <td style={{padding:mobile?"10px 12px":"12px 16px",color:C.textMuted,maxWidth:mobile?110:250,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{hold.items?.map(i=>`${i.qty}- ${i.name}`).join(", ")}</td>
-                    <td style={{padding:mobile?"10px 12px":"12px 16px",fontWeight:700,color:C.text}}>KES {hold.total?.toLocaleString()}</td>
-                    {!mobile && <td style={{padding:"12px 16px",color:C.textMuted,fontSize:12}}>{hold.createdDate}</td>}
-                    {!mobile && <td style={{padding:"12px 16px"}}><span style={{background:`${sc}20`,color:sc,fontSize:10,fontWeight:700,borderRadius:4,padding:"3px 10px",textTransform:"uppercase"}}>{hold.status}</span></td>}
-                    <td style={{padding:mobile?"10px 12px":"12px 16px"}}>
-                      <button onClick={()=>setHoldList?.(prev=>prev.filter(h=>h.id!==hold.id))} style={{padding:"4px 10px",background:`${C.error}15`,color:C.error,border:`1px solid ${C.error}30`,borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:T.font,fontWeight:600}}>Remove</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        {delErr && <div style={{ margin:"12px 16px 0", padding:"8px 12px", background:`${C.error}12`, border:`1px solid ${C.error}40`, borderRadius:8, fontSize:12, color:C.error, fontFamily:T.font }}>{delErr}</div>}
+        <div style={{overflowY:"auto",flex:1,padding:16}}>
+          {holdList.length===0 ? (
+            <div style={{padding:"60px 0",textAlign:"center"}}>
+              <Icon name="hold" size={32} color={C.textMuted}/>
+              <div style={{fontWeight:600,color:C.textSec,marginTop:12,fontSize:14}}>No orders on hold</div>
+              <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Orders from waiters will appear here</div>
+            </div>
+          ) : holdList.map(hold => {
+            const hItems = Array.isArray(hold.items) ? hold.items
+              : (()=>{ try { return JSON.parse(hold.items||"[]"); } catch { return []; } })();
+            const hPerson = hold.person || (hItems[0]?.note||"").match(/^\[([^\]]+)\]/)?.[1] || "P1";
+            const sMeta = ({
+              pending: { c:C.warning,   label:"Pending" },
+              billed:  { c:C.secondary, label:"Billed"  },
+              bumped:  { c:C.success,   label:"Ready"   },
+            })[hold.status] || { c:C.textMuted, label:(hold.status||"—") };
+            return (
+              <div key={hold.id} style={{ background:C.bg, border:`1px solid ${sMeta.c}55`, borderRadius:10, marginBottom:10, overflow:"hidden" }}>
+                <div style={{ background:`${sMeta.c}12`, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, borderBottom:`1px solid ${sMeta.c}25`, flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ padding:"3px 12px", borderRadius:20, fontSize:12, fontWeight:800, background:C.primary, color:"#fff" }}>{hPerson}</span>
+                    <span style={{ fontSize:11, color:C.textMuted }}>{hold.table || "—"}</span>
+                    <span style={{ background:`${sMeta.c}22`, color:sMeta.c, fontSize:10, fontWeight:700, borderRadius:4, padding:"2px 8px", textTransform:"uppercase" }}>{sMeta.label}</span>
+                    {hold.createdDate && <span style={{ fontSize:10, color:C.textMuted }}>· {hold.createdDate}</span>}
+                  </div>
+                  <button disabled={busyId===hold.id} onClick={()=>removeHold(hold)} style={{ padding:"4px 12px", borderRadius:5, fontSize:11, fontWeight:700, border:`1px solid ${C.error}`, background:`${C.error}15`, color:C.error, cursor:busyId===hold.id?"wait":"pointer", fontFamily:T.font, opacity:busyId===hold.id?0.6:1 }}>{busyId===hold.id?"Deleting…":"Delete"}</button>
+                </div>
+                <div style={{ padding:"8px 14px" }}>
+                  {hItems.map((item,idx)=>(
+                    <div key={idx} style={{ display:"flex", justifyContent:"space-between", padding:"4px 0", fontSize:12, borderBottom:idx<hItems.length-1?`1px solid ${C.border}`:"none" }}>
+                      <span style={{ color:C.textSec }}>{item.qty}× {item.name}</span>
+                      <span style={{ fontWeight:600, color:C.text }}>KES {((item.price||0)*item.qty).toLocaleString()}</span>
+                    </div>
+                  ))}
+                  <div style={{ textAlign:"right", fontSize:12, fontWeight:700, color:sMeta.c, marginTop:6 }}>
+                    Total: KES {(hold.total||0).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
         <div style={{padding:"16px 24px",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"flex-end",background:C.surface}}>
           <button onClick={onClose} style={{padding:"8px 20px",background:C.primary,color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:T.font}}>Close</button>

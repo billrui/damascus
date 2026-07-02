@@ -344,9 +344,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
             ? p
             : [{
                 id: inv.id, table: tbl, waiter: user.name,
-                items: bill.items, subtotal: bill.subtotal,
-                discount: bill.discount, discountType: bill.hhType, discountPct: bill.hhPct,
-                total: bill.total, finalTotal: bill.total, holdIds: bill.holdIds,
+                items: bill.items, total: bill.total, holdIds: bill.holdIds,
                 status: "open", createdAt: new Date().toISOString(),
               }, ...p]);
         }
@@ -1095,7 +1093,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                           border:"1px solid "+T.amber,background:T.amber+"18",
                           color:T.amber,cursor:"pointer",
                         }}>Send to Kitchen</button>
-                        <button onClick={()=>setHeldOrders(p=>p.filter(x=>x.id!==h.id))} style={{
+                        <button onClick={()=>setHoldList(p=>p.filter(x=>x.id!==h.id))} style={{
                           padding:"4px 10px",borderRadius:5,fontSize:11,fontWeight:700,
                           border:"1px solid "+T.red,background:T.red+"18",
                           color:T.red,cursor:"pointer",
@@ -1110,11 +1108,11 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                           borderBottom:idx<hItems.length-1?"1px solid "+T.border:"none",
                         }}>
                           <span style={{color:T.textSecondary}}>{item.qty}× {item.name}</span>
-                          <span style={{fontWeight:600,color:T.textPrimary}}>{fmt(item.price*item.qty)}</span>
+                          <span style={{fontWeight:600,color:T.textPrimary}}>KES {fmt(item.price*item.qty)}</span>
                         </div>
                       ))}
                       <div style={{textAlign:"right",fontSize:12,fontWeight:700,color:T.amber,marginTop:6}}>
-                        Total: {fmt(hTotal)}
+                        Total: KES {fmt(hTotal)}
                       </div>
                     </div>
                   </div>
