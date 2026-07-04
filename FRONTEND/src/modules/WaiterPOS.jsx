@@ -127,6 +127,28 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const tablePersons = persons[table] || [];
   const cart         = carts[key(table, person)] || [];
 
+  // For TAKEAWAY, a person is "occupied" while their order is still in the kitchen.
+  // Each new takeaway customer must get a fresh, unoccupied person slot.
+  const occupiedTakeawayPersons = () => {
+    const set = new Set();
+    (holdList || []).forEach(h => {
+      if ((h.table || "TAKEAWAY") !== "TAKEAWAY") return;
+      if (h.status !== "pending" && h.status !== "bumped") return;
+      (h.items || []).forEach(it => {
+        const m = (it.note || "").match(/^\[([^\]]+)\]/);
+        if (m) set.add(m[1]);
+      });
+    });
+    return set;
+  };
+  const nextFreeTakeawayPerson = () => {
+    const occ = occupiedTakeawayPersons();
+    let n = 1;
+    while (occ.has("P" + n)) n++;
+    return "P" + n;
+  };
+  const occupiedTA = table === "TAKEAWAY" ? occupiedTakeawayPersons() : new Set();
+
   const setCart = fn => setCarts(prev => ({
     ...prev,
     [key(table, person)]: typeof fn === "function" ? fn(prev[key(table, person)] || []) : fn,
@@ -134,12 +156,18 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
 
   const switchTable = t => {
     setTable(t);
-    const tPersons = persons[t] || [];
-    if (tPersons.length === 0) {
-      setPersons(p => ({ ...p, [t]: ["P1"] }));   // every table starts with P1
-      setPerson("P1");
+    if (t === "TAKEAWAY") {
+      const np = nextFreeTakeawayPerson();
+      setPersons(p => ({ ...p, TAKEAWAY: Array.from(new Set([...(p.TAKEAWAY || []), np])) }));
+      setPerson(np);
     } else {
-      setPerson(tPersons[0]);
+      const tPersons = persons[t] || [];
+      if (tPersons.length === 0) {
+        setPersons(p => ({ ...p, [t]: ["P1"] }));   // every table starts with P1
+        setPerson("P1");
+      } else {
+        setPerson(tPersons[0]);
+      }
     }
     setSearch(""); setPage(0); setEditHold(null);
   };
@@ -474,10 +502,17 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     setModal("kitchen_sent");
     setTimeout(() => {
       setModal(null);
-      // Auto-suggest next person if others have empty carts
-      const allP = persons[table] || [];
-      const nextEmpty = allP.find(p => p !== person && !(carts[key(table, p)]||[]).length);
-      if (nextEmpty) setPerson(nextEmpty);
+      if (table === "TAKEAWAY") {
+        // Each takeaway is a new customer — move to the next free slot (P1 is now occupied in the kitchen)
+        const np = nextFreeTakeawayPerson();
+        setPersons(p => ({ ...p, TAKEAWAY: Array.from(new Set([...(p.TAKEAWAY || ["P1"]), np])) }));
+        setPerson(np);
+      } else {
+        // Auto-suggest next person if others have empty carts
+        const allP = persons[table] || [];
+        const nextEmpty = allP.find(p => p !== person && !(carts[key(table, p)]||[]).length);
+        if (nextEmpty) setPerson(nextEmpty);
+      }
     }, 1200);
     try {
       const { posApi } = await import("../api/index.js");
@@ -652,13 +687,15 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                 return hItems.filter(i=>{ const m=(i.note||"").match(/^\[([^\]]+)\]/); return m?m[1]===p:p==="P1"; });
               });
               const sentCount = sentItems.reduce((s,i)=>s+i.qty,0);
+              const isOccupied = occupiedTA.has(p) && !isAct;
 
               return (
-                <button key={p} onClick={()=>setPerson(p)} style={{
+                <button key={p} onClick={()=> isOccupied ? null : setPerson(p)} title={isOccupied ? "This customer's order is in the kitchen" : ""} style={{
                   border:"2px solid "+(isAct?pColor:pColor+"80"),
                   borderRadius:10, overflow:"hidden",
                   background:isAct?pColor:pColor+"22",
-                  cursor:"pointer", padding:"12px 6px",
+                  cursor:isOccupied?"not-allowed":"pointer", padding:"12px 6px",
+                  opacity:isOccupied?0.5:1,
                   display:"flex", flexDirection:"column",
                   alignItems:"center", gap:4,
                   transition:"all 0.15s",

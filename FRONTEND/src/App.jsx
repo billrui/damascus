@@ -253,7 +253,8 @@ export default function RoyalPalmApp() {
 
       case "wastage":
         return <WastageView wastage={wastage} setWastage={setWastage}
-          batches={batches} setBatches={setBatches} user={user} ingredients={ingredients} />;
+          batches={batches} setBatches={setBatches} user={user}
+          ingredients={ingredients} menuItems={menuItems} />;
 
       case "reports":
         return <ReportsView sales={sales} batches={batches}

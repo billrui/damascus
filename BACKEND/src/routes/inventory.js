@@ -67,7 +67,8 @@ const produceSchema = z.object({
 });
 
 const wastageSchema = z.object({
-  ingredient_id: z.string().min(1),
+  ingredient_id: z.string().min(1).optional(),
+  menu_item_id:  z.string().min(1).optional(),
   batch_id:      z.string().optional(),
   qty:           z.coerce.number().positive(),
   reason:        z.enum(['expired','spoilage','trimming','breakage','theft','other','overcooked','returned','staff_meal']),
@@ -534,18 +535,35 @@ router.get('/issues', requirePermission('inventory_readonly'), validateQuery(pag
 // ─── POST /api/inventory/wastage ──────────────────────────────────────────────
 router.post('/wastage', requirePermission('wastage'), validate(wastageSchema), async (req, res, next) => {
   try {
-    const { ingredient_id, batch_id, qty, reason, notes } = req.body;
+    const { ingredient_id, menu_item_id, batch_id, qty, reason, notes } = req.body;
 
     const record = await db.transaction(async (client) => {
       const wastage_ref = await nextWastageRef(client);
 
-      // Cost for value calculation
+      // ── Menu item (finished dish) wastage: log only, no money value ──
+      if (menu_item_id) {
+        // Remove the wasted dishes from prepared stock on hand
+        await client.query(
+          `UPDATE menu_item_stock
+             SET qty_available = GREATEST(0, qty_available - $1), updated_at = now()
+           WHERE menu_item_id = $2`,
+          [qty, menu_item_id]
+        );
+        const { rows } = await client.query(
+          `INSERT INTO wastage (wastage_ref, wastage_date, menu_item_id, qty, reason, value, recorded_by, notes)
+           VALUES ($1, CURRENT_DATE, $2, $3, $4, 0, $5, $6)
+           RETURNING *`,
+          [wastage_ref, menu_item_id, qty, reason, req.user.sub, notes || null]
+        );
+        return rows[0];
+      }
+
+      // ── Ingredient (raw stock) wastage: value from cost, deduct batch ──
       const { rows: ingRows } = await client.query(
         `SELECT cost_per_unit FROM ingredients WHERE id = $1`, [ingredient_id]
       );
       const value = (ingRows[0]?.cost_per_unit || 0) * qty;
 
-      // Deduct from batch if specified
       if (batch_id) {
         await client.query(
           `UPDATE batches
@@ -586,10 +604,15 @@ router.get('/wastage', requirePermission('wastage'), validateQuery(paginationSch
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     const { rows } = await db.query(
-      `SELECT w.*, i.name AS ingredient_name, i.unit, u.name AS recorded_by_name,
+      `SELECT w.*,
+              COALESCE(i.name, m.name) AS ingredient_name,
+              COALESCE(i.unit, 'pcs')  AS unit,
+              m.name AS menu_item_name,
+              u.name AS recorded_by_name,
               b.batch_no AS batch_no
        FROM wastage w
-       JOIN ingredients i ON i.id = w.ingredient_id
+       LEFT JOIN ingredients i ON i.id = w.ingredient_id
+       LEFT JOIN menu_items  m ON m.id = w.menu_item_id
        LEFT JOIN users u ON u.id = w.recorded_by
        LEFT JOIN batches b ON b.id = w.batch_id
        ${where}

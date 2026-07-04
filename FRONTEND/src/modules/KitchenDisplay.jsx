@@ -21,7 +21,7 @@ function normalizeHold(h) {
   return {
     ...h,
     id:          String(h.id),
-    table:       h.table       ?? h.table_no    ?? "Walk-in",
+    table:       h.table       ?? h.table_no    ?? "TAKEAWAY",
     waiter:      h.waiter      ?? h.waiter_name ?? "Staff",
     createdDate: h.createdDate ?? h.created_at ?? new Date().toISOString(),
     items,
@@ -539,10 +539,27 @@ export default function KitchenDisplay({ holdList, setHoldList, readOnly = false
   const [showBumped, setShowBumped] = useState(false);
   const [tick,       setTick]       = useState(0);
 
+  // Merge an incoming socket hold with what we already have, keeping a real
+  // table/waiter if the incoming copy came back without them.
+  const mergeHold = (existing, incoming) => {
+    const nh = normalizeHold(incoming);
+    if (!existing) return nh;
+    return {
+      ...nh,
+      table:  (nh.table  && nh.table  !== "TAKEAWAY-UNSET") ? nh.table  : existing.table,
+      waiter: (nh.waiter && nh.waiter !== "Staff")   ? nh.waiter : existing.waiter,
+    };
+  };
+
   // Live orders from waiter via Socket.IO
   useSocket({
-    "hold:created": (hold) => setHoldList(prev => [normalizeHold(hold), ...prev]),
-    "hold:updated": (hold) => setHoldList(prev => prev.map(h => String(h.id) === String(hold.id) ? normalizeHold(hold) : h)),
+    "hold:created": (hold) => setHoldList(prev => {
+      const id = String(normalizeHold(hold).id);
+      const ex = prev.find(h => String(h.id) === id);
+      const merged = mergeHold(ex, hold);
+      return ex ? prev.map(h => String(h.id) === id ? merged : h) : [merged, ...prev];
+    }),
+    "hold:updated": (hold) => setHoldList(prev => prev.map(h => String(h.id) === String(hold.id) ? mergeHold(h, hold) : h)),
     "hold:deleted": ({ id }) => setHoldList(prev => prev.filter(h => String(h.id) !== String(id))),
   });
 
@@ -556,14 +573,22 @@ export default function KitchenDisplay({ holdList, setHoldList, readOnly = false
 
   // Group holds by table — one card per table, persons inside
   const tableGroups = (() => {
-    const filtered = holds.filter(h => {
+    // Collapse any duplicate ids (optimistic + socket/poll copies of the same hold)
+    const seen = new Set();
+    const deduped = holds.filter(h => {
+      const k = String(h.id);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const filtered = deduped.filter(h => {
       const matchBumped = showBumped ? true : h.status !== "bumped";
       return (h.status === "pending" || h.status === "bumped") && matchBumped;
     });
     const map = {};
     const order = [];
     filtered.forEach(h => {
-      const tKey = h.table || "Walk-in";
+      const tKey = h.table || "TAKEAWAY";
       if (!map[tKey]) { map[tKey] = []; order.push(tKey); }
       // Split hold into per-person groups
       const items = safeItems(h.items);

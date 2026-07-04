@@ -570,13 +570,22 @@ export function VarianceView({ ingredients = [] }) {
 }
 
 // --- WASTAGE VIEW -------------------------------------------------------------
-export function WastageView({ wastage, setWastage, batches, setBatches, user, ingredients = [] }) {
+export function WastageView({ wastage, setWastage, batches, setBatches, user, ingredients = [], menuItems = [] }) {
   const { mobile } = useBreakpoint();
-  const [form, setForm] = useState({ ingredientId: "I01", batchId: "", qty: "", reason: "spoilage" });
+  const [form, setForm] = useState({ wasteType: "ingredient", ingredientId: "I01", menuItemId: "", batchId: "", qty: "", reason: "spoilage" });
   const [saved, setSaved] = useState(false);
   const [recording, setRecording] = useState(null); // batch id being recorded
 
   const isBoss = user?.role === "admin" || user?.role === "manager";
+
+  // ── Daily scope (history + total are per-day; expired pickup stays live) ──
+  const ymd = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  const today = ymd(new Date());
+  const [wDate, setWDate] = useState(today);
+  const shiftWDay = (off) => { const d = new Date(wDate + "T00:00:00"); d.setDate(d.getDate() + off); setWDate(ymd(d)); };
+  const niceWDate = new Date(wDate + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  const wDayOf = (w) => (w.date || w.wastage_date || "").toString().slice(0, 10);
+  const dayWastage = wastage.filter((w) => wDayOf(w) === wDate);
 
   // Auto-picked-up expired stock still holding quantity — awaiting the boss's write-off
   const expiredPending = batches
@@ -623,23 +632,71 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
     .filter((b) => (b.ingredient_id || b.ingredientId) === form.ingredientId && (parseFloat(b.remaining) || 0) > 0)
     .sort((a, b) => new Date(a.expiry || a.expiryDate || "2999-01-01") - new Date(b.expiry || b.expiryDate || "2999-01-01"));
   const ing = ingredients.find((i) => i.id === form.ingredientId);
+  const selDish = menuItems.find((m) => m.id === form.menuItemId);
+  const isMenu = form.wasteType === "menu";
   const selBatch = batches.find((b) => b.id === form.batchId);
   const selCost = parseFloat(selBatch?.cost_per_unit ?? selBatch?.costPerUnit) || parseFloat(ing?.cost_per_unit ?? ing?.costPerUnit) || 0;
-  const estLoss = form.qty ? (Number(form.qty) * selCost).toFixed(2) : 0;
+  const estLoss = (!isMenu && form.qty) ? (Number(form.qty) * selCost).toFixed(2) : 0;
 
   const [logErr, setLogErr] = useState("");
   const [logging, setLogging] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const q = search.trim().toLowerCase();
+  const ingMatches  = ingredients.filter((i) => (i.name || "").toLowerCase().includes(q));
+  const dishMatches = menuItems.filter((m) => (m.name || "").toLowerCase().includes(q));
+  const setType = (t) => { setSearch(""); setForm((f) => ({ ...f, wasteType: t, batchId: "" })); };
 
   // Make sure the selected ingredient is a real one (default "I01" may not exist)
   useEffect(() => {
-    if (ingredients.length && !ingredients.some((i) => i.id === form.ingredientId)) {
+    if (!isMenu && ingredients.length && !ingredients.some((i) => i.id === form.ingredientId)) {
       setForm((f) => ({ ...f, ingredientId: ingredients[0].id, batchId: "" }));
     }
-  }, [ingredients]);
+  }, [ingredients, isMenu]);
+
+  // When the item dropdown changes, split into ingredient vs menu-item
+  const onPickTarget = (val) => {
+    if (val.startsWith("menu:")) {
+      setForm((f) => ({ ...f, wasteType: "menu", menuItemId: val.slice(5), batchId: "" }));
+    } else {
+      setForm((f) => ({ ...f, wasteType: "ingredient", ingredientId: val.slice(4), menuItemId: "", batchId: "" }));
+    }
+  };
 
   const handleLog = async () => {
     setLogErr("");
     if (!form.qty || Number(form.qty) <= 0) { setLogErr("Enter how much was wasted."); return; }
+
+    if (isMenu) {
+      // Wasting a finished dish — log dish + quantity, no money value
+      if (!form.menuItemId) { setLogErr("Choose a dish."); return; }
+      setLogging(true);
+      try {
+        const rec = await inventoryApi.recordWastage({
+          menu_item_id: form.menuItemId,
+          qty: Number(form.qty),
+          reason: form.reason,
+          notes: `Dish wasted — recorded by ${user?.name || "manager"}`,
+        });
+        setWastage((p) => [{
+          id: rec?.id || `WST-${String(Date.now()).slice(-4)}`,
+          date: new Date().toISOString().slice(0, 10),
+          menu_item_id: form.menuItemId, ingredient: selDish?.name, unit: "pcs",
+          qty: Number(form.qty), value: 0, reason: form.reason,
+          recordedBy: user?.name,
+        }, ...p]);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        setForm((f) => ({ ...f, qty: "" }));
+      } catch (e) {
+        setLogErr(e?.response?.data?.error || e?.message || "Couldn't record — try again.");
+      } finally {
+        setLogging(false);
+      }
+      return;
+    }
+
+    // Ingredient (raw stock) path
     if (!form.batchId) { setLogErr("Choose the batch it came from."); return; }
     const remaining = parseFloat(selBatch?.remaining) || 0;
     if (Number(form.qty) > remaining) { setLogErr(`Only ${remaining} ${ing?.unit || ""} left in that batch.`); return; }
@@ -671,7 +728,7 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
     }
   };
 
-  const totalWastageValue = wastage.reduce((s, w) => s + (parseFloat(w.value) || 0), 0);
+  const totalWastageValue = dayWastage.reduce((s, w) => s + (parseFloat(w.value) || 0), 0);
 
   const reasonColors = {
     expired: { color: "#DC2626", bg: "#FEE2E2" },
@@ -686,6 +743,15 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: mobile ? 14 : 32, background: "#F5F2EB" }}>
       <SectionHeader title="Wastage Register" sub="Record spoilage, expired stock, and manual write-offs" />
+
+      {/* Daily date picker — history + total are for this day */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        <button onClick={() => shiftWDay(-1)} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${LUXURY_THEME.border}`, background: "#FFF", cursor: "pointer", fontSize: 14, fontWeight: 700 }}>←</button>
+        <input type="date" value={wDate} max={today} onChange={(e) => setWDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${LUXURY_THEME.border}`, fontSize: 13 }} />
+        <button onClick={() => shiftWDay(1)} disabled={wDate >= today} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${LUXURY_THEME.border}`, background: wDate >= today ? "#F3F4F6" : "#FFF", cursor: wDate >= today ? "default" : "pointer", fontSize: 14, fontWeight: 700 }}>→</button>
+        <button onClick={() => setWDate(today)} style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: wDate === today ? LUXURY_THEME.primary : "#E5E0D5", color: wDate === today ? "#FFF" : "#6B7280", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Today</button>
+        <span style={{ fontSize: 13, fontWeight: 600, color: LUXURY_THEME.textPrimary, marginLeft: 4 }}>{niceWDate}</span>
+      </div>
 
       {/* Auto-picked-up expired stock — awaiting the boss's write-off */}
       {expiredPending.length > 0 && (
@@ -721,14 +787,28 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
           <Card>
             <div style={{ fontWeight: 600, fontSize: 13, color: LUXURY_THEME.textPrimary, marginBottom: 18 }}>Record Wastage</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <Select label="Ingredient" value={form.ingredientId} onChange={(e) => setForm((f) => ({ ...f, ingredientId: e.target.value, batchId: "" }))}>
-                {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-              </Select>
-              <Select label="Batch Reference" value={form.batchId} onChange={(e) => setForm((f) => ({ ...f, batchId: e.target.value }))}>
-                <option value="">- Select batch -</option>
-                {availBatches.map((b) => (<option key={b.id} value={b.id}>{b.batchNo} - {b.remaining} {ing?.unit} remaining - exp {b.expiry}</option>))}
-              </Select>
-              <Input label={`Quantity (${ing?.unit || "units"})`} type="number" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} />
+              {/* Type toggle + search */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: LUXURY_THEME.textSecondary, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>What was wasted</label>
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  {[["ingredient", "Ingredient"], ["menu", "Dish"]].map(([t, l]) => (
+                    <button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "8px", borderRadius: 6, border: `1px solid ${form.wasteType === t ? LUXURY_THEME.primary : LUXURY_THEME.border}`, cursor: "pointer", fontSize: 12, fontWeight: 700, background: form.wasteType === t ? LUXURY_THEME.primary : "#FFF", color: form.wasteType === t ? "#FFF" : LUXURY_THEME.textSecondary }}>{l}</button>
+                  ))}
+                </div>
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isMenu ? "Search a dish…" : "Search an ingredient…"} style={{ width: "100%", padding: "8px 11px", borderRadius: 6, border: `1px solid ${LUXURY_THEME.border}`, fontSize: 12.5, boxSizing: "border-box", marginBottom: 8, outline: "none" }} />
+                <Select value={isMenu ? form.menuItemId : form.ingredientId} onChange={(e) => isMenu ? setForm((f) => ({ ...f, menuItemId: e.target.value })) : setForm((f) => ({ ...f, ingredientId: e.target.value, batchId: "" }))}>
+                  {(isMenu ? dishMatches : ingMatches).length === 0
+                    ? <option value="">{(isMenu ? menuItems.length : ingredients.length) === 0 ? `None loaded (${isMenu ? "dishes" : "ingredients"}: ${isMenu ? menuItems.length : ingredients.length})` : `No match for "${search}"`}</option>
+                    : (isMenu ? dishMatches : ingMatches).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </Select>
+              </div>
+              {!isMenu && (
+                <Select label="Batch Reference" value={form.batchId} onChange={(e) => setForm((f) => ({ ...f, batchId: e.target.value }))}>
+                  <option value="">- Select batch -</option>
+                  {availBatches.map((b) => (<option key={b.id} value={b.id}>{b.batchNo} - {b.remaining} {ing?.unit} remaining - exp {b.expiry}</option>))}
+                </Select>
+              )}
+              <Input label={`Quantity (${isMenu ? "plates / units" : (ing?.unit || "units")})`} type="number" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} />
               <Select label="Reason" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}>
                 {[
                   ["spoilage", "Spoilage (went bad)"],
@@ -738,7 +818,11 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
                   ["staff_meal", "Staff meal"],
                 ].map(([val, label]) => (<option key={val} value={val}>{label}</option>))}
               </Select>
-              {estLoss > 0 && (
+              {isMenu ? (
+                <div style={{ background: "#EFF6FF", border: `1px solid #BFDBFE`, borderRadius: 6, padding: "10px 14px", fontSize: 11.5, color: "#1E40AF" }}>
+                  Dishes are logged by quantity only — no money value — and removed from prepared stock on hand.
+                </div>
+              ) : estLoss > 0 && (
                 <div style={{ background: "#FEE2E2", border: `1px solid #DC2626`, borderRadius: 6, padding: "10px 14px" }}>
                   <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 600 }}>Estimated Loss: KES {Number(estLoss).toLocaleString()}</div>
                 </div>
@@ -760,12 +844,12 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
           <Card style={{ padding: 18, background: "#FEE2E2", border: `1px solid #DC2626` }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#6B7280", letterSpacing: 0.5, marginBottom: 6, textTransform: "uppercase" }}>Total Liability</div>
             <div style={{ fontSize: 28, fontWeight: 600, color: "#DC2626", fontFamily: "'Inter', monospace" }}>KES {totalWastageValue.toLocaleString()}</div>
-            <div style={{ fontSize: 11, color: LUXURY_THEME.textMuted, marginTop: 6 }}>{wastage.length} recorded incidents</div>
+            <div style={{ fontSize: 11, color: LUXURY_THEME.textMuted, marginTop: 6 }}>{dayWastage.length} recorded {dayWastage.length === 1 ? "incident" : "incidents"} · {niceWDate}</div>
           </Card>
         </div>
 
         <Card style={{ overflow: "hidden" }}>
-          <div style={{ fontWeight: 600, fontSize: 13, color: LUXURY_THEME.textPrimary, marginBottom: 18 }}>Wastage History</div>
+          <div style={{ fontWeight: 600, fontSize: 13, color: LUXURY_THEME.textPrimary, marginBottom: 18 }}>Wastage History — {niceWDate}</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
               <thead>
@@ -781,7 +865,10 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
                 </tr>
               </thead>
               <tbody>
-                {[...wastage].reverse().map((w, i) => {
+                {dayWastage.length === 0 && (
+                  <tr><td colSpan="8" style={{ padding: "34px 12px", textAlign: "center", fontSize: 12.5, color: LUXURY_THEME.textMuted }}>No wastage recorded on {niceWDate}.</td></tr>
+                )}
+                {[...dayWastage].map((w, i) => {
                   const ingItem = ingredients.find((x) => x.id === (w.ingredient_id || w.ingredientId));
                   const batch = batches.find((b) => b.id === (w.batch_id || w.batchId));
                   const reasonColor = reasonColors[w.reason] || reasonColors.other;
@@ -791,7 +878,7 @@ export function WastageView({ wastage, setWastage, batches, setBatches, user, in
                   const dateStr = (w.date || w.wastage_date || "").toString().slice(0, 10);
                   const by = w.recordedBy || w.recorded_by_name || "—";
                   return (
-                    <tr key={w.id} style={{ borderBottom: i < wastage.length - 1 ? `1px solid ${LUXURY_THEME.border}` : "none", background: isEven ? "#FFFFFF" : "#F8F8F8" }}>
+                    <tr key={w.id} style={{ borderBottom: i < dayWastage.length - 1 ? `1px solid ${LUXURY_THEME.border}` : "none", background: isEven ? "#FFFFFF" : "#F8F8F8" }}>
                       <td style={{ padding: "10px 12px", fontWeight: 500, fontSize: 11, color: LUXURY_THEME.primary }}>{w.id}</td>
                       <td style={{ padding: "10px 12px", fontSize: 11, color: LUXURY_THEME.textMuted }}>{dateStr}</td>
                       <td style={{ padding: "10px 12px", fontSize: 11, fontWeight: 500, color: LUXURY_THEME.textPrimary }}>{ingName}</td>
