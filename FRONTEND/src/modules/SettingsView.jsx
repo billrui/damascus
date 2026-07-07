@@ -10,12 +10,9 @@ import AuditLogs from "./settings/AuditLogs";
 import OverheadSettings from "./OverheadSettings";
 
 const NAV_ITEMS = [
-  { id: "business",  label: "Business Profile",  symbol: "-", roles: ["admin"] },
+  { id: "business",  label: "Business Profile",  symbol: "-", roles: ["admin", "manager"] },
   { id: "users",     label: "Users & Roles",      symbol: "-", roles: ["admin", "manager"] },
-  { id: "pos",       label: "POS Settings",        symbol: "-", roles: ["admin", "manager"] },
-  { id: "inventory", label: "Inventory Settings", symbol: "-", roles: ["admin", "manager"] },
   { id: "receipt",   label: "Receipt & Printing", symbol: "-", roles: ["admin", "manager"] },
-  { id: "reports",   label: "Reports Settings",   symbol: "-", roles: ["admin", "manager"] },
   { id: "system",    label: "System Controls",    symbol: "-", roles: ["admin"] },
   { id: "utilities", label: "Utilities",          symbol: "-", roles: ["admin", "manager"] },
   { id: "overheads", label: "Overheads",          symbol: "-", roles: ["admin"] },

@@ -50,6 +50,35 @@ const business = {
   vat:     env.BUSINESS_VAT,
 };
 
+// Merge saved receipt settings (from the settings table) onto the base business
+// info. Falls back to current behaviour if a setting is missing, so receipts
+// never break.
+async function getReceiptOptions() {
+  try {
+    const { rows } = await db.query(`SELECT key, value FROM settings WHERE key LIKE 'receipt_%' OR key LIKE 'business_%'`);
+    const s = {}; rows.forEach(r => { s[r.key] = r.value; });
+    const bool = (k, d) => (s[k] !== undefined ? s[k] === 'true' : d);
+    return {
+      ...business,
+      // Business identity — set once in Business Profile, else env defaults
+      name:          s.business_name    || business.name,
+      address:       s.business_address || business.address,
+      tel:           s.business_phone   || business.tel,
+      vat:           s.business_kra     || business.vat,   // KRA PIN on receipts
+      tagline:       s.business_tagline || '',
+      footer:        s.receipt_footer || '',
+      showAddress:   bool('receipt_show_address',   true),
+      showPhone:     bool('receipt_show_phone',     true),
+      showVat:       bool('receipt_show_vat',       true),
+      showCashier:   bool('receipt_show_cashier',   true),
+      showTable:     bool('receipt_show_table',     true),
+      showSignature: bool('receipt_show_signature', false),
+      paperCut:      bool('receipt_paper_cut',      true),
+      copies:        parseInt(s.receipt_copies) || 1,
+    };
+  } catch { return business; }
+}
+
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const saleItemSchema = z.object({
@@ -256,7 +285,7 @@ router.post('/sales', requirePermission('pos'), strictLimiter, validate(createSa
     const completeSale = { ...fullSale[0], change_due, tendered };
 
     // Generate receipt PDF (async — don't await, client gets sale immediately)
-    generateReceiptPDF(completeSale, business)
+    getReceiptOptions().then(biz => generateReceiptPDF(completeSale, biz))
       .then(filepath => {
         const relPath = path.relative(process.cwd(), filepath);
         db.query(`UPDATE sales SET receipt_path = $1 WHERE id = $2`, [relPath, sale.id]);
@@ -429,7 +458,7 @@ router.get('/receipts/:id', requirePermission('pos'), async (req, res, next) => 
     }
 
     // Otherwise generate on-demand
-    const filepath = await generateReceiptPDF(sale, business);
+    const filepath = await generateReceiptPDF(sale, await getReceiptOptions());
     const relPath  = path.relative(process.cwd(), filepath);
     await db.query(`UPDATE sales SET receipt_path = $1 WHERE id = $2`, [relPath, sale.id]);
     streamReceiptPDF(filepath, res);
@@ -455,7 +484,7 @@ router.get('/receipts/:id/escpos', requirePermission('pos'), async (req, res, ne
 
     if (!rows[0]) return res.status(404).json({ error: 'Sale not found' });
 
-    const buffer = generateEscPos(rows[0], business);
+    const buffer = generateEscPos(rows[0], await getReceiptOptions());
     res.setHeader('Content-Type',   'application/octet-stream');
     res.setHeader('Content-Length', buffer.length);
     res.send(buffer);

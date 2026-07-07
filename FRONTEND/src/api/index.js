@@ -145,6 +145,7 @@ export const reportsApi = {
   payments:   (params = {}) => api.get("/reports/payments",   { params }).then(r => r.data),
   analytics:  (params = {}) => api.get("/reports/analytics",  { params }).then(r => r.data),
   auditLog:   (params = {}) => api.get("/reports/audit-log",  { params }).then(r => r.data),
+  backup:     ()             => api.get("/reports/backup",    { responseType: "blob" }).then(r => r.data),
 };
 
 // -- Offline sync --------------------------------------------------------------

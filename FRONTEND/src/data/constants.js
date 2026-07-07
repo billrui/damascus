@@ -20,31 +20,30 @@ export const d = (offset = 0) => {
 };
 
 // --- Permissions catalogue ----------------------------------------------------
+// One consistent format. These are the permissions the backend actually enforces.
 export const ALL_PERMISSIONS = [
   { id: "dashboard",          label: "Dashboard",          group: "General",   description: "View summary KPIs and charts" },
   { id: "pos",                label: "POS Terminal",        group: "General",   description: "Process sales and take orders" },
   { id: "shift",              label: "Shift Management",    group: "General",   description: "Open/close shifts, Z-report, petty cash" },
-    { id: "inventory",          label: "Ingredients",       emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
-  { id: "inventory:list",     label: "Ingredient List",   emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
-  { id: "inventory:receive",  label: "Receive / Issue",   emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
-  { id: "inventory:log",      label: "Stock Activity Log",emoji: "-",  roles: ["admin","manager","cashier"] },
-  { id: "inventory_readonly", label: "Stock Viewer",      emoji: "-",  roles: ["chef"] },
-  { id: "expiry",             label: "Expiry Control",    emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
+  { id: "inventory",          label: "Ingredients",         group: "Inventory", description: "Manage ingredients, receive and issue stock" },
+  { id: "inventory_readonly", label: "Stock Viewer",        group: "Inventory", description: "View current stock levels and batches" },
+  { id: "expiry",             label: "Expiry Control",      group: "Inventory", description: "Monitor near-expiry and expired stock" },
   { id: "wastage",            label: "Wastage Log",         group: "Inventory", description: "Record wastage and spoilage" },
-  { id: "variance",           label: "Variance Report",     group: "Reports",   description: "View stock variance analysis" },
-  { id: "reports",            label: "Reports & Analytics", group: "Reports",   description: "Full financial reports" },
+  { id: "variance",           label: "Variance Report",     group: "Reports",   description: "View daily stock/production variance" },
+  { id: "reports",            label: "Reports & Analytics", group: "Reports",   description: "View the daily report and export" },
+  { id: "items",              label: "Menu Items",          group: "Admin",     description: "Create and edit menu items" },
   { id: "settings",           label: "System Settings",     group: "Admin",     description: "Configure system-wide settings" },
-  { id: "items",              label: "Menu Items",          group: "Admin",     description: "Create and edit menu items and recipes" },
   { id: "kds",                label: "Kitchen Display",     group: "Kitchen",   description: "Kitchen order display screen" },
 ];
 
 // --- Default permissions per role ---------------------------------------------
+// MUST stay identical to backend DEFAULT_PERMISSIONS (routes/users.js).
+// Backend is the source of truth; this mirror is only for the create-user form.
 export const DEFAULT_ROLE_PERMISSIONS = {
-  admin:       ["dashboard","pos","shift","inventory","inventory_readonly","reports","expiry","variance","settings","wastage","items"],
-  manager:     ["dashboard","pos","shift","inventory","inventory_readonly","reports","expiry","variance","wastage","settings","items","kds","open_invoices","open_orders","production"],
+  admin:       ["dashboard","shift","inventory","inventory_readonly","items","settings","wastage","variance","reports","expiry"],
+  manager:     ["dashboard","pos","shift","inventory","inventory_readonly","items","settings","wastage","variance","reports","expiry","kds"],
   cashier:     ["dashboard","pos","shift","inventory","inventory_readonly","expiry","wastage"],
   storekeeper: ["dashboard","inventory","inventory_readonly","expiry","wastage","items"],
-  chef:        ["dashboard","inventory_readonly","kds"],
   waiter:      ["pos"],
   kitchen:     ["kds"],
 };
@@ -61,7 +60,7 @@ export const ROLE_PERMISSIONS = DEFAULT_ROLE_PERMISSIONS;
 export const ALL_NAV = [
   { id: "dashboard",          label: "Dashboard",        emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
   { id: "pos",                label: "New Sale",          emoji: "-",  roles: ["admin","manager","cashier","waiter"] },
-  { id: "kds",                label: "Kitchen Display",   emoji: "-",  roles: ["admin","manager","kitchen","chef"] },
+  { id: "kds",                label: "Kitchen Display",   emoji: "-",  roles: ["admin","manager","kitchen"] },
   { id: "open_invoices",      label: "Open Invoices",    emoji: "-",  roles: ["admin","manager"] },
   { id: "open_orders",        label: "Open Orders",      emoji: "-",  roles: ["admin","manager"] },
   { id: "production",         label: "Production",       emoji: "-",  roles: ["admin","manager"] },
@@ -70,7 +69,7 @@ export const ALL_NAV = [
   { id: "inventory",          label: "Ingredients",       emoji: "-",  roles: ["admin","manager","storekeeper","cashier"] },
   { id: "inventory:list",     label: "Ingredient List",   emoji: "-",  roles: ["admin","manager","storekeeper"] },
   { id: "inventory:receive",  label: "Receive / Issue",   emoji: "-",  roles: ["admin","manager","storekeeper"] },
-  { id: "inventory_readonly", label: "Stock Viewer",      emoji: "-",  roles: ["waiter"] },
+  { id: "inventory_readonly", label: "Stock Viewer",      emoji: "-",  roles: ["admin","manager","cashier","storekeeper"] },
   { id: "expiry",             label: "Expiry Control",    emoji: "-",  roles: ["admin","manager","storekeeper"] },
   { id: "variance",           label: "Variance",          emoji: "-",  roles: ["admin","manager"] },
   { id: "wastage",            label: "Wastage Log",       emoji: "-",  roles: ["admin","manager","storekeeper"] },

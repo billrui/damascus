@@ -54,6 +54,24 @@ const variance = (shift) => {
   return isNaN(result) ? null : result;
 };
 
+// M-Pesa has no float — expected M-Pesa is simply the M-Pesa sales
+const mpesaVariance = (shift) => {
+  const actual = shift.actualMpesa ?? shift.closing_mpesa;
+  if (actual == null || actual === "") return null;
+  const expectedM = (payBreakdown(shift.sales||[]).mpesa || 0);
+  const result = parseFloat(actual) - expectedM;
+  return isNaN(result) ? null : result;
+};
+
+// A shift is balanced only if BOTH cash and M-Pesa balance.
+// Returns true (balanced), false (a discrepancy), or null (not closed / no data).
+const shiftBalanced = (shift) => {
+  const cv = variance(shift);
+  const mv = mpesaVariance(shift);
+  if (cv === null && mv === null) return null;
+  return (cv || 0) === 0 && (mv || 0) === 0;
+};
+
 const fmtTime = () => {
   const now = new Date();
   return now.toTimeString().slice(0, 5);
@@ -505,10 +523,8 @@ function ZReportModal({ shift, onClose }) {
           <div style={{ marginBottom:20 }}>
             <div style={{ fontSize:9, fontWeight:600, color:"#7A7A7A", letterSpacing:1, marginBottom:8, textTransform:"uppercase" }}>Payment Methods</div>
             {[
-              ["Cash", pay.cash || 0, GREEN], 
-              ["Card", pay.card || 0, "#C5A059"], 
-              ["M-Pesa", pay.mpesa || 0, "#2E7D64"], 
-              ["Gift Card", pay.gift || 0, "#8B3A3A"]
+              ["Cash", pay.cash || 0, GREEN],
+              ["M-Pesa", pay.mpesa || 0, "#2E7D64"]
             ].map(([label, val, color]) => (
               <div key={label} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 0" }}>
                 <span style={{ fontSize:11, color:"#4A4A4A" }}>{label}</span>
@@ -680,12 +696,12 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
           <div style={{ marginBottom:16 }}>
             <div style={{ fontSize:10, fontWeight:600, color:"#7A7A7A", marginBottom:8, letterSpacing:"0.5px", textTransform:"uppercase" }}>Payment Breakdown</div>
             <div style={{ display:"flex", gap:4, height:6, borderRadius:3, overflow:"hidden", marginBottom:8 }}>
-              {[["cash","#2E7D64"],["card","#C5A059"],["mpesa","#2E7D64"],["gift","#8B3A3A"]].map(([k,c])=>
+              {[["cash","#2E7D64"],["mpesa","#2E7D64"]].map(([k,c])=>
                 total>0&&(pay[k]||0)>0 ? <div key={k} style={{ flex:pay[k]||0, background:c }} /> : null
               )}
             </div>
             <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
-              {[["Cash", pay.cash || 0, GREEN], ["Card", pay.card || 0, "#C5A059"], ["M-Pesa", pay.mpesa || 0, "#2E7D64"]].map(([l,v,c])=>(
+              {[["Cash", pay.cash || 0, GREEN], ["M-Pesa", pay.mpesa || 0, "#2E7D64"]].map(([l,v,c])=>(
                 <span key={l} style={{ fontSize:10, color:c, fontWeight:600 }}>{l}: KES {v.toLocaleString()}</span>
               ))}
             </div>
@@ -747,6 +763,7 @@ function ShiftDetailModal({ shift, onZReport, onClose }) {
 
 // --- LIVE SHIFT PANEL (active shift) -----------------------------------------
 function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
+  const { mobile } = useBreakpoint();
   const [showPetty,  setShowPetty]  = useState(false);
   const [showZReport,setShowZReport]= useState(false);
   const total = shiftTotal(shift) || 0;
@@ -773,13 +790,13 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
           </div>
         </div>
         <div style={{ display:"flex", gap:8 }}>
-          {user?.role !== "manager" && (
+          {user?.role !== "admin" && (
             <button onClick={() => setShowPetty(true)} style={{ padding:"6px 12px", borderRadius:4, border:"1px solid #D1D5DB", background:"transparent", color:"#555555", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
               Petty Cash
             </button>
           )}
 
-          {user?.role !== "manager" && (
+          {user?.role !== "admin" && (
             <button onClick={onCloseShift} style={{ padding:"6px 14px", borderRadius:4, border:"none", background:RED, color:"#FFFFFF", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', sans-serif" }}>
               Close Shift
             </button>
@@ -804,7 +821,7 @@ function LiveShiftPanel({ shift, setShift, onClose, onCloseShift, user }) {
 
       {/* Payment split */}
       <div style={{ padding:"12px 20px 14px", borderTop:"1px solid #F0EDE6", display:"flex", gap:16, flexWrap:"wrap" }}>
-        {[["Cash", pay.cash || 0, GREEN], ["Card", pay.card || 0, "#C5A059"], ["M-Pesa", pay.mpesa || 0, "#2E7D64"], ["Gift", pay.gift || 0, "#8B3A3A"]].map(([l,v,c])=>(
+        {[["Cash", pay.cash || 0, GREEN], ["M-Pesa", pay.mpesa || 0, "#2E7D64"]].map(([l,v,c])=>(
           <div key={l}>
             <div style={{ fontSize:9, color:"#7A7A7A", fontWeight:600, letterSpacing:"0.5px" }}>{l}</div>
             <div style={{ fontSize:12, fontWeight:600, color:v>0?c:"#D1D5DB" }}>KES {(v||0).toLocaleString()}</div>
@@ -917,7 +934,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
 
   // -- Open Shift --
   const handleOpenShift = async (float, mpesaFloat = 0) => {
-    if (user.role === "manager") return;
+    if (user.role === "admin") return;
     try {
       const shift = await shiftsApi.open({ opening_float: float, mpesa_float: mpesaFloat });
       // Normalize to local shape
@@ -994,20 +1011,25 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
   };
 
   // -- Summary chart data --
-  const summaryData = shifts.slice(0, 7).reverse().map((s) => ({
-    name: `${(s.cashier || s.opened_by_name || "Staff").split(" ")[0]} ${s.openedAt || ""}`,
-    revenue: shiftTotal(s),
-    cash:    payBreakdown(s.sales||[]).cash || 0,
-    card:    payBreakdown(s.sales||[]).card || 0,
-    mpesa:   payBreakdown(s.sales||[]).mpesa || 0,
-    short:   variance(s) < 0 ? Math.abs(variance(s)) : 0,
-    over:    variance(s) > 0 ? variance(s) : 0,
-  }));
+  const summaryData = shifts.slice(0, 7).reverse().map((s) => {
+    const cv = variance(s) || 0, mv = mpesaVariance(s) || 0;
+    return {
+      name: `${(s.cashier || s.opened_by_name || "Staff").split(" ")[0]} ${s.openedAt || ""}`,
+      revenue: shiftTotal(s),
+      cash:    payBreakdown(s.sales||[]).cash || 0,
+      mpesa:   payBreakdown(s.sales||[]).mpesa || 0,
+      short:   (cv < 0 ? -cv : 0) + (mv < 0 ? -mv : 0),
+      over:    (cv > 0 ?  cv : 0) + (mv > 0 ?  mv : 0),
+    };
+  });
 
   const totalRevAll   = filteredShifts.reduce((a, s) => a + shiftTotal(s), 0);
   const avgRevPerShift = filteredShifts.length > 0 ? Math.round(totalRevAll / filteredShifts.length) : 0;
-  const shortages     = filteredShifts.filter((s) => (variance(s)||0) < 0);
-  const totalShortage = shortages.reduce((a, s) => a + Math.abs(variance(s)||0), 0);
+  const shortages     = filteredShifts.filter((s) => ((variance(s)||0) + (mpesaVariance(s)||0)) < 0 || (mpesaVariance(s)||0) < 0 || (variance(s)||0) < 0);
+  const totalShortage = filteredShifts.reduce((a, s) => {
+    const cv = variance(s)||0, mv = mpesaVariance(s)||0;
+    return a + (cv < 0 ? -cv : 0) + (mv < 0 ? -mv : 0);
+  }, 0);
 
   return (
     <div style={{ flex:1, overflowY:"auto", padding:28, background:GRAY_BG, position:"relative" }}>
@@ -1033,7 +1055,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
             ))}
           </div>
         )}
-          {!activeShift && user.role !== "manager" && (
+          {!activeShift && user.role !== "admin" && (
             <button
               onClick={() => setModal("open")}
               style={{ padding:"8px 20px", borderRadius:4, border:"none", background:DARK_BG, color:GOLD, fontSize:12, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontFamily:"'Inter', sans-serif" }}
@@ -1123,7 +1145,7 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
               <table style={{ width:"100%", minWidth:900, borderCollapse:"collapse" }}>
                 <thead>
                   <tr style={{ background:"#F8F8F8" }}>
-                    {["Shift","Date","Cashier","Opened","Closed","Orders","Revenue","Cash","Card","M-Pesa","Variance",""].map((h)=>(
+                    {["Shift","Date","Operator","Opened","Closed","Orders","Revenue","Cash","M-Pesa","Balance",""].map((h)=>(
                       <th key={h} style={{ padding:"9px 12px", textAlign:"left", fontSize:9, fontWeight:600, color:"#7A7A7A", borderBottom:"1px solid #F0EDE6", whiteSpace:"nowrap", letterSpacing:"0.5px" }}>{h}</th>
                     ))}
                   </tr>
@@ -1146,13 +1168,19 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                         <td style={{ padding:"9px 12px", fontSize:11, textAlign:"center" }}>{(s.sales||[]).length}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, fontWeight:600 }}>KES {tot.toLocaleString()}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:GREEN }}>KES {(pay.cash||0).toLocaleString()}</td>
-                        <td style={{ padding:"9px 12px", fontSize:11, color:"#C5A059" }}>KES {(pay.card||0).toLocaleString()}</td>
                         <td style={{ padding:"9px 12px", fontSize:11, color:"#2E7D64" }}>KES {(pay.mpesa||0).toLocaleString()}</td>
                         <td style={{ padding:"9px 12px" }}>
-                          {diff === null ? <Badge color="#7A7A7A" bg="#F8F8F8">Open</Badge>
-                            : diff === 0  ? <Badge color={GREEN} bg="#ECFDF5">Balanced</Badge>
-                            : diff > 0    ? <Badge color="#C5A059" bg="#FEF9F0">+{diff.toLocaleString()}</Badge>
-                            :               <Badge color={RED} bg="#FEF2F2">-{Math.abs(diff).toLocaleString()}</Badge>}
+                          {(() => {
+                            const cv = variance(s), mv = mpesaVariance(s);
+                            if (cv === null && mv === null) return <Badge color="#7A7A7A" bg="#F8F8F8">Open</Badge>;
+                            const c = cv || 0, m = mv || 0;
+                            if (c === 0 && m === 0) return <Badge color={GREEN} bg="#ECFDF5">Balanced</Badge>;
+                            const parts = [];
+                            if (c !== 0) parts.push(`Cash ${c > 0 ? "+" : ""}${c.toLocaleString()}`);
+                            if (m !== 0) parts.push(`M-Pesa ${m > 0 ? "+" : ""}${m.toLocaleString()}`);
+                            const anyShort = c < 0 || m < 0;
+                            return <Badge color={anyShort ? RED : "#C5A059"} bg={anyShort ? "#FEF2F2" : "#FEF9F0"}>{parts.join(" · ")}</Badge>;
+                          })()}
                         </td>
                         <td style={{ padding:"9px 12px" }}>
                           <div style={{ display:"flex", gap:6 }}>
@@ -1197,7 +1225,6 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                 <YAxis tickFormatter={(v)=>`${(v/1000).toFixed(0)}K`} tick={{ fontSize:9, fill:"#7A7A7A" }} axisLine={false} tickLine={false} width={36} />
                 <Tooltip formatter={(v)=>[`KES ${v.toLocaleString()}`]} contentStyle={{ borderRadius:6, border:"1px solid #E5E0D5", fontSize:11 }} />
                 <Bar dataKey="cash"  stackId="a" fill={GREEN}    name="Cash" />
-                <Bar dataKey="card"  stackId="a" fill="#C5A059"  name="Card" />
                 <Bar dataKey="mpesa" stackId="a" fill="#2E7D64"  name="M-Pesa" />
               </BarChart>
             </ResponsiveContainer>
@@ -1241,9 +1268,9 @@ export function ShiftView({ sales, user, shifts: shiftsProp, setShifts: setShift
                     if (!byName[sName]) byName[sName]={ shifts:0, revenue:0, balanced:0, issues:0 };
                     byName[sName].shifts++;
                     byName[sName].revenue += shiftTotal(s);
-                    const v = variance(s);
-                    if (v===0) byName[sName].balanced++;
-                    else if (v!==null) byName[sName].issues++;
+                    const bal = shiftBalanced(s);
+                    if (bal === true) byName[sName].balanced++;
+                    else if (bal === false) byName[sName].issues++;
                   });
                   return Object.entries(byName).map(([name,d], i)=>(
                     <tr key={name} style={{ borderBottom:i<Object.keys(byName).length-1?"1px solid #F0EDE6":"none" }}>

@@ -92,21 +92,26 @@ function exportPDF(profitData, kpis) {
 // --- REPORTS VIEW -------------------------------------------------------------
 export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
   const { mobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState("profitability");
-  const [itemPeriod, setItemPeriod] = useState("daily");
+  const ymd = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  const today = ymd(new Date());
+  const [date, setDate] = useState(today);
+  const shiftDay = (o) => { const d = new Date(date + "T00:00:00"); d.setDate(d.getDate() + o); setDate(ymd(d)); };
+  const niceDate = new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const ctrlBtn = { padding: "8px 12px", borderRadius: 6, border: "1px solid #E5E0D5", background: "#FFF", cursor: "pointer", fontSize: 14, fontWeight: 700 };
+
+  const dayOf  = (s) => (s.date || s.sale_date || (s.created_at || "").slice(0,10) || "").toString().slice(0,10);
+  const daySales = (sales || []).filter((s) => dayOf(s) === date);
+  const wDayOf = (w) => (w.date || w.wastage_date || "").toString().slice(0,10);
+  const dayWastage = (wastage || []).filter((w) => wDayOf(w) === date);
+
+  const revenue     = daySales.reduce((s, x) => s + (parseFloat(x.total) || 0), 0);
+  const orders      = daySales.length;
+  const itemsSold   = daySales.reduce((s, x) => s + (x.items || []).reduce((a, i) => a + (i.qty || 1), 0), 0);
+  const wastageLoss = dayWastage.reduce((s, w) => s + (parseFloat(w.value) || 0), 0);
 
   const topItems = (() => {
-    const now = new Date();
-    const todayStr = now.toISOString().split("T")[0];
-    const filtered = sales.filter(s => {
-      const d = new Date(s.date || s.sale_date || s.created_at);
-      if (itemPeriod === "daily") return (s.date || s.sale_date) === todayStr;
-      if (itemPeriod === "weekly") { const w = new Date(now); w.setDate(w.getDate()-7); return d >= w; }
-      if (itemPeriod === "monthly") { const m = new Date(now); m.setDate(m.getDate()-30); return d >= m; }
-      return true;
-    });
     const counts = {};
-    for (const s of filtered) {
+    for (const s of daySales) {
       const hour = (s.sale_time || s.time || "00:00").split(":")[0];
       for (const item of (s.items || [])) {
         const name = item.name || item.menu_item_name || "Unknown";
@@ -122,321 +127,82 @@ export function ReportsView({ sales, batches, wastage, menuItems = [] }) {
     });
   })();
 
-  const totalRevenue = sales.reduce((s, x) => s + x.total, 0);
-  const totalOrders  = sales.length;
+  const exportCSV = () => {
+    const rows = [
+      ["Damascus Hotel - Daily Report", niceDate],
+      [],
+      ["Money taken (KES)", Math.round(revenue)],
+      ["Orders", orders],
+      ["Items sold", itemsSold],
+      ["Wastage loss (KES)", Math.round(wastageLoss)],
+      [],
+      ["Top selling items"],
+      ["#", "Item", "Sold", "Revenue (KES)", "Peak time"],
+      ...topItems.map((it, i) => [i+1, it.name, it.qty, Math.round(it.revenue), it.peakHour]),
+    ];
+    const csv = rows.map(r => r.map(c => `"${String(c ?? "")}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `daily-report-${date}.csv`;
+    a.click();
+  };
 
-  const profitData = menuItems
-    .filter((m) => sales.some((s) => (s.items || []).some((i) => (i.menuId || i.menu_item_id) === m.id)))
-    .map((m) => {
-      const qty    = sales.reduce((s, sale) => s + (sale.items || []).filter((i) => (i.menuId || i.menu_item_id) === m.id).reduce((a, i) => a + i.qty, 0), 0);
-      const rev    = qty * m.price;
-      const cogs   = qty * m.cost;
-      const profit = rev - cogs;
-      const margin = rev > 0 ? Math.round((profit / rev) * 100) : 0;
-      return { ...m, qty, rev, cogs, profit, margin };
-    })
-    .sort((a, b) => b.profit - a.profit);
-
-  const totalProfit    = profitData.reduce((s, p) => s + p.profit, 0);
-  const overallMargin  = totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 100) : 0;
-  const totalWastageVal = wastage.reduce((s, w) => s + w.value, 0);
-
-  const kpis = { revenue: totalRevenue, profit: totalProfit, margin: overallMargin, wastage: totalWastageVal };
-
-  const summaryKpis = [
-    { label: "GROSS REVENUE",  value: fmt(totalRevenue),   color: "#1A1A1A" },
-    { label: "GROSS PROFIT",   value: fmt(totalProfit),    color: "#2E7D64" },
-    { label: "OVERALL MARGIN", value: `${overallMargin}%`, color: "#C5A059" },
-    { label: "WASTAGE LOSS",   value: fmt(totalWastageVal), color: "#8B3A3A" },
+  const kpis = [
+    { label: "MONEY TAKEN",  value: fmt(revenue),      color: "#1A1A1A" },
+    { label: "ORDERS",       value: String(orders),    color: "#1E3A5F" },
+    { label: "ITEMS SOLD",   value: String(itemsSold), color: "#16a34a" },
+    { label: "WASTAGE LOSS", value: fmt(wastageLoss),  color: "#8B3A3A" },
   ];
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: mobile ? 14 : 28, background: "#F5F2EB" }}>
-      {/* Tab switcher */}
-      <div style={{ display: "flex", gap: 8, marginBottom: mobile ? 16 : 24, flexWrap: "wrap" }}>
-        {[["profitability", "Item Profitability"], ["top_items", "Top Selling Items"]].map(([id, label]) => (
-          <button key={id} onClick={() => setActiveTab(id)} style={{
-            padding: "8px 18px", borderRadius: 6, border: "none", cursor: "pointer",
-            fontWeight: 600, fontSize: 13,
-            background: activeTab === id ? "#1E3A5F" : "#fff",
-            color: activeTab === id ? "#fff" : "#6B7280",
-          }}>{label}</button>
-        ))}
-      </div>
+      <SectionHeader title="Daily Report" sub="What you took, what sold, and what you lost - for one day" />
 
-      {/* Top Selling Items Tab */}
-      {activeTab === "top_items" && (
-        <div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            {[["daily","Today"],["weekly","This Week"],["monthly","This Month"]].map(([id,label]) => (
-              <button key={id} onClick={() => setItemPeriod(id)} style={{
-                padding: "6px 16px", borderRadius: 20, cursor: "pointer", fontWeight: 600, fontSize: 12,
-                background: itemPeriod === id ? "#16a34a" : "#fff",
-                color: itemPeriod === id ? "#fff" : "#6B7280",
-                border: "1px solid #E5E7EB",
-              }}>{label}</button>
-            ))}
-          </div>
-          {topItems.length === 0 ? (
-            <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, padding: 48, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>No sales data for this period</div>
-          ) : (
-            <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
-              <TableScroll min={560}>
-              <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
-                {["#","Item","Sold","Revenue","Peak Time",""].map((h,i) => (
-                  <div key={i} style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase" }}>{h}</div>
-                ))}
-              </div>
-              {topItems.map((item, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "11px 16px", borderBottom: i < topItems.length-1 ? "1px solid #E5E7EB" : "none", alignItems: "center" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#9CA3AF" }}>{i+1}</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{item.name}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#16a34a" }}>{item.qty}x</div>
-                  <div style={{ fontSize: 13, color: "#111827" }}>KES {item.revenue.toLocaleString()}</div>
-                  <div style={{ fontSize: 12, color: "#6B7280" }}>🕐 {item.peakHour}</div>
-                  <div style={{ width: "100%", height: 6, borderRadius: 3, background: "#F3F4F6" }}>
-                    <div style={{ width: `${Math.round((item.qty/topItems[0].qty)*100)}%`, height: "100%", background: "#16a34a", borderRadius: 3 }} />
-                  </div>
-                </div>
-              ))}
-              </TableScroll>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === "profitability" && <div>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ 
-          display: "flex", 
-          alignItems: "center", 
-          justifyContent: "space-between",
-          marginBottom: 4,
-        }}>
-          <h1 style={{ 
-            fontSize: 20, 
-            fontWeight: 600, 
-            color: "#1A1A1A",
-            margin: 0,
-            letterSpacing: "0.5px",
-            fontFamily: "'Cormorant Garamond', serif",
-          }}>
-            Financial Analytics
-          </h1>
-          <div style={{ fontSize: 11, color: "#7A7A7A" }}>
-            {new Date().toLocaleDateString("en-KE", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
-          </div>
-        </div>
-        <div style={{ 
-          width: 40, 
-          height: 2, 
-          background: "#C5A059", 
-          marginTop: 6 
-        }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
+        <button onClick={() => shiftDay(-1)} style={ctrlBtn}>←</button>
+        <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #E5E0D5", fontSize: 13 }} />
+        <button onClick={() => shiftDay(1)} disabled={date >= today} style={{ ...ctrlBtn, background: date >= today ? "#F3F4F6" : "#FFF", cursor: date >= today ? "default" : "pointer" }}>→</button>
+        <button onClick={() => setDate(today)} style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: date === today ? "#1E3A5F" : "#E5E0D5", color: date === today ? "#FFF" : "#6B7280", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Today</button>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", marginLeft: 4 }}>{niceDate}</span>
+        <button onClick={exportCSV} style={{ marginLeft: "auto", padding: "8px 16px", borderRadius: 6, border: "1px solid #1E3A5F", background: "#FFF", color: "#1E3A5F", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Export CSV</button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: mobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 24 }}>
-        {summaryKpis.map((c) => (
-          <Card key={c.label} style={{ padding: 18, borderTop: `3px solid ${c.color}` }}>
-            <div style={{ 
-              fontSize: 10, 
-              fontWeight: 600, 
-              color: "#7A7A7A", 
-              letterSpacing: 1, 
-              marginBottom: 6,
-              textTransform: "uppercase",
-            }}>
-              {c.label}
-            </div>
-            <div style={{ 
-              fontSize: 20, 
-              fontWeight: 700, 
-              color: c.color,
-              fontFamily: "'Inter', monospace",
-            }}>
-              {c.value}
-            </div>
-          </Card>
+        {kpis.map((k) => (
+          <div key={k.label} style={{ background: "#FFF", border: "1px solid #E5E0D5", borderRadius: 8, padding: 16 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#6B7280", letterSpacing: 1, marginBottom: 6 }}>{k.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: k.color, fontFamily: "'Inter', monospace" }}>{k.value}</div>
+          </div>
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 20 }}>
-        <Card>
-          <SectionHeader title="Profit by Menu Item" />
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={profitData.slice(0, 8)} margin={{ top: 0, right: 10, left: 0, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F0EDE6" vertical={false} />
-              <XAxis 
-                dataKey="name" 
-                tick={{ fontSize: 10, fill: "#7A7A7A" }} 
-                angle={-30} 
-                textAnchor="end" 
-                axisLine={false} 
-                tickLine={false} 
-              />
-              <YAxis 
-                tickFormatter={(v) => `${(v / 1000).toFixed(0)}K`} 
-                tick={{ fontSize: 10, fill: "#7A7A7A" }} 
-                axisLine={false} 
-                tickLine={false} 
-                width={45} 
-              />
-              <Tooltip 
-                formatter={(v) => [fmt(v), "Profit"]} 
-                contentStyle={{ 
-                  borderRadius: 6, 
-                  border: "1px solid #E5E0D5", 
-                  fontSize: 11,
-                  fontFamily: "'Inter', sans-serif",
-                }} 
-              />
-              <Bar dataKey="profit" fill="#C5A059" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-
-        <Card>
-          <div style={{ 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "space-between", 
-            marginBottom: 16 
-          }}>
-            <SectionHeader title="Item Profitability" />
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={() => exportCSV(profitData, kpis)}
-                title="Download CSV"
-                style={{ 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: 6, 
-                  padding: "5px 12px", 
-                  borderRadius: 4, 
-                  border: "1px solid #E5E0D5", 
-                  background: "#FFFFFF", 
-                  fontSize: 10, 
-                  fontWeight: 600, 
-                  color: "#4A4A4A", 
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = "#F8F8F8";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = "#FFFFFF";
-                }}
-              >
-                - CSV
-              </button>
-              <button
-                onClick={() => exportPDF(profitData, kpis)}
-                title="Print / Save PDF"
-                style={{ 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: 6, 
-                  padding: "5px 12px", 
-                  borderRadius: 4, 
-                  border: "none", 
-                  background: "#1A1A1A", 
-                  fontSize: 10, 
-                  fontWeight: 600, 
-                  color: "#C5A059", 
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = "#2C3E50";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = "#1A1A1A";
-                }}
-              >
-                PDF
-              </button>
+      <div style={{ background: "#FFF", border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: "#111827", borderBottom: "1px solid #E5E7EB" }}>Top selling items - {niceDate}</div>
+        {topItems.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>No sales recorded on this day.</div>
+        ) : (
+          <TableScroll min={560}>
+            <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
+              {["#","Item","Sold","Revenue","Peak Time",""].map((h,i) => (
+                <div key={i} style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase" }}>{h}</div>
+              ))}
             </div>
-          </div>
-          <div style={{ overflowY: "auto", maxHeight: 280, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#F8F8F8" }}>
-                  {["Item", "Qty", "Revenue", "COGS", "Profit", "Margin"].map((h) => (
-                    <th key={h} style={{ 
-                      padding: "10px 12px", 
-                      textAlign: "left", 
-                      fontSize: 10, 
-                      fontWeight: 600, 
-                      color: "#7A7A7A", 
-                      borderBottom: "1px solid #E5E0D5",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                    }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {profitData.map((p, i) => (
-                  <tr key={p.id} style={{ 
-                    borderBottom: i < profitData.length - 1 ? "1px solid #F0EDE6" : "none",
-                    background: i % 2 === 0 ? "#FFFFFF" : "#F8F8F8",
-                  }}>
-                    <td style={{ 
-                      padding: "8px 12px", 
-                      fontSize: 11, 
-                      fontWeight: 500, 
-                      color: "#1A1A1A" 
-                    }}>
-                      {p.emoji} {p.name}
-                    </td>
-                    <td style={{ 
-                      padding: "8px 12px", 
-                      fontSize: 11, 
-                      color: "#7A7A7A" 
-                    }}>
-                      -{p.qty}
-                    </td>
-                    <td style={{ 
-                      padding: "8px 12px", 
-                      fontSize: 11, 
-                      color: "#4A4A4A" 
-                    }}>
-                      KES {p.rev.toLocaleString()}
-                    </td>
-                    <td style={{ 
-                      padding: "8px 12px", 
-                      fontSize: 11, 
-                      color: "#4A4A4A" 
-                    }}>
-                      KES {p.cogs.toLocaleString()}
-                    </td>
-                    <td style={{ 
-                      padding: "8px 12px", 
-                      fontSize: 11, 
-                      fontWeight: 600, 
-                      color: "#2E7D64" 
-                    }}>
-                      KES {p.profit.toLocaleString()}
-                    </td>
-                    <td style={{ padding: "8px 12px" }}>
-                      <Badge
-                        color={p.margin >= 50 ? "#2E7D64" : p.margin >= 30 ? "#B8860B" : "#8B3A3A"}
-                        bg={p.margin >= 50 ? "#ECFDF5" : p.margin >= 30 ? "#FFFBEB" : "#FEF2F2"}
-                      >
-                        {p.margin}%
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+            {topItems.map((item, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "32px 1fr 60px 110px 110px 120px", padding: "11px 16px", borderBottom: i < topItems.length-1 ? "1px solid #E5E7EB" : "none", alignItems: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#9CA3AF" }}>{i+1}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{item.name}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#16a34a" }}>{item.qty}x</div>
+                <div style={{ fontSize: 13, color: "#111827" }}>KES {Math.round(item.revenue).toLocaleString()}</div>
+                <div style={{ fontSize: 12, color: "#6B7280" }}>🕐 {item.peakHour}</div>
+                <div style={{ width: "100%", height: 6, borderRadius: 3, background: "#F3F4F6" }}>
+                  <div style={{ width: `${Math.round((item.qty/topItems[0].qty)*100)}%`, height: "100%", background: "#16a34a", borderRadius: 3 }} />
+                </div>
+              </div>
+            ))}
+          </TableScroll>
+        )}
       </div>
-      </div>}
     </div>
   );
 }

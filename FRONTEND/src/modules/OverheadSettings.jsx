@@ -24,6 +24,7 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
   const showStaff       = mode === "overheads" || mode === "all";
   const [fixed,       setFixed]       = useState({});
   const [consumables, setConsumables] = useState({});
+  const [customCons,  setCustomCons]  = useState([]);   // user-added utilities: {label, cost, days}
   const [staff,       setStaff]       = useState([{ name: "", salary: "" }]);
   const [saving,      setSaving]      = useState(false);
   const [saved,       setSaved]       = useState(false);
@@ -41,6 +42,9 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
       });
       setFixed(f);
       setConsumables(c);
+      if (s.overhead_custom_consumables) {
+        try { const arr = JSON.parse(s.overhead_custom_consumables); if (Array.isArray(arr)) setCustomCons(arr); } catch {}
+      }
       if (s.staff_salaries) {
         try { setStaff(JSON.parse(s.staff_salaries)); } catch {}
       }
@@ -53,7 +57,11 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
     const cost = parseFloat(consumables[c.key]?.cost) || 0;
     const days = parseFloat(consumables[c.key]?.days) || 1;
     return s + cost / days;
-  }, 0);
+  }, 0) + customCons.reduce((s, c) => s + (parseFloat(c.cost) || 0) / (parseFloat(c.days) || 1), 0);
+
+  const addCustom    = () => setCustomCons(p => [...p, { label: "", cost: "", days: "" }]);
+  const removeCustom = (i) => setCustomCons(p => p.filter((_, idx) => idx !== i));
+  const updateCustom = (i, field, val) => setCustomCons(p => p.map((c, idx) => idx === i ? { ...c, [field]: val } : c));
   const staffTotal  = staff.reduce((s, e) => s + (parseFloat(e.salary) || 0), 0);
   const staffDaily  = staffTotal / 30;
   const totalDaily  = fixedDaily + consumableDaily + staffDaily;
@@ -71,6 +79,7 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
         payload[`overhead_${x.key}_cost`] = consumables[x.key]?.cost || 0;
         payload[`overhead_${x.key}_days`] = consumables[x.key]?.days || 1;
       });
+      payload.overhead_custom_consumables = JSON.stringify(customCons.filter(c => c.label && c.label.trim()));
       payload.staff_salaries = JSON.stringify(staff.filter(e => e.name));
       await settingsApi.update(payload);
       setSaved(true);
@@ -116,6 +125,22 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
                       <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{c.label}</div>
                       <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>
                         {cost > 0 ? `KES ${cost.toLocaleString()} per ${c.unit} · lasts ${days||"-"} day${days===1?"":"s"}` : "Not set"}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight:700, color:G, fontSize:14 }}>KES {daily.toFixed(0)}<span style={{ fontSize:11, fontWeight:400, color:MUTED }}>/day</span></div>
+                  </div>
+                );
+              })}
+              {customCons.filter(c => c.label && c.label.trim()).map((c, i) => {
+                const cost = parseFloat(c.cost) || 0;
+                const days = parseFloat(c.days) || 0;
+                const daily = days > 0 ? cost / days : 0;
+                return (
+                  <div key={"custro-" + i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", borderBottom:`1px solid #F1F5F9` }}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:"#111827" }}>{c.label}</div>
+                      <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>
+                        {cost > 0 ? `KES ${cost.toLocaleString()} · lasts ${days||"-"} day${days===1?"":"s"}` : "Not set"}
                       </div>
                     </div>
                     <div style={{ fontWeight:700, color:G, fontSize:14 }}>KES {daily.toFixed(0)}<span style={{ fontSize:11, fontWeight:400, color:MUTED }}>/day</span></div>
@@ -212,6 +237,37 @@ export default function OverheadSettings({ onBack, mode = "all" }) {
               </div>
             </div>
           ))}
+
+          {/* Custom utilities the user adds */}
+          {customCons.map((c, i) => (
+            <div key={"cust-" + i} style={{ marginBottom:16, paddingTop:12, borderTop:`1px dashed ${BORDER}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                <input value={c.label} onChange={e => updateCustom(i, "label", e.target.value)} placeholder="Utility name (e.g. Water, Electricity)" style={{ ...fi, flex:1, fontWeight:600 }} />
+                <button onClick={() => removeCustom(i)} title="Remove" style={{ border:"none", background:"transparent", color:"#DC2626", cursor:"pointer", fontSize:18, fontWeight:700, lineHeight:1, padding:"0 4px" }}>×</button>
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:10, color:MUTED, marginBottom:2 }}>Cost</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                    <span style={{ fontSize:11, color:MUTED }}>KES</span>
+                    <input type="number" min="0" value={c.cost} onChange={e => updateCustom(i, "cost", e.target.value)} placeholder="0" style={{...fi}} />
+                  </div>
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:10, color:MUTED, marginBottom:2 }}>Lasts (days)</div>
+                  <input type="number" min="1" value={c.days} onChange={e => updateCustom(i, "days", e.target.value)} placeholder="7" style={{...fi}} />
+                </div>
+                <div style={{ display:"flex", alignItems:"flex-end", paddingBottom:2 }}>
+                  <span style={{ fontSize:11, fontWeight:700, color:G, whiteSpace:"nowrap" }}>
+                    KES {((parseFloat(c.cost)||0)/(parseFloat(c.days)||1)).toFixed(0)}/day
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <button onClick={addCustom} style={{ marginTop:4, marginBottom:8, padding:"8px 16px", borderRadius:6, border:`1px dashed ${B}`, background:"#F8FAFC", color:B, fontSize:12, fontWeight:700, cursor:"pointer" }}>+ Add another utility</button>
+
           <div style={{ padding:"10px 14px", background:"#F0FDF4", borderRadius:6, border:`1px solid ${G}30`, marginTop:8 }}>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
               <span style={{ color:MUTED }}>Consumable daily cost</span>

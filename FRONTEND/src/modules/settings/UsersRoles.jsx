@@ -3,9 +3,9 @@ import { C, Card, CardHeader, CardBody, Input, Select, Btn, Badge, Modal, Confir
 import { DEFAULT_ROLE_PERMISSIONS, CAN_CREATE_ROLES } from "../../data";
 
 // --- SHARED ROLE CONSTANTS ----------------------------------------------------
-const ROLES = ["admin", "manager", "cashier", "storekeeper", "waiter"];
+const ROLES = ["admin", "manager", "cashier", "storekeeper", "waiter", "kitchen"];
 const ROLE_COLORS = { admin: "red", manager: "blue", cashier: "green", storekeeper: "yellow", waiter: "gray" };
-const ROLE_SYMBOLS = { admin: "-", manager: "-", cashier: "-", storekeeper: "-", waiter: "-" };
+const ROLE_SYMBOLS = { admin: "-", manager: "-", cashier: "-", storekeeper: "-", waiter: "-", kitchen: "-" };
 
 // --- PERMISSIONS DATA ---------------------------------------------------------
 const PERMISSION_GROUPS = [
@@ -55,10 +55,11 @@ const PERMISSION_GROUPS = [
 
 const DEFAULT_MATRIX = {
   admin:       Object.fromEntries(PERMISSION_GROUPS.flatMap(g => g.perms).map(p => [p.id, true])),
-  manager:     { can_delete_sale:false, can_give_discount:true, can_edit_price:false, can_split_bill:true, can_void_item:true, can_hold_order:true, can_adjust_stock:true, can_receive_stock:true, can_issue_stock:true, can_write_off:true, can_add_item:true, can_edit_item:true, can_view_reports:true, can_export_reports:true, can_view_cost:true, can_view_variance:true, can_manage_users:false, can_view_audit:true, can_backup:false, can_change_settings:false, can_view_overhead:false, can_edit_overhead:false },
+  manager:     { can_delete_sale:true, can_give_discount:true, can_edit_price:true, can_split_bill:true, can_void_item:true, can_hold_order:true, can_adjust_stock:true, can_receive_stock:true, can_issue_stock:true, can_write_off:true, can_add_item:true, can_edit_item:true, can_view_reports:true, can_export_reports:true, can_view_cost:true, can_view_variance:true, can_manage_users:true, can_view_audit:false, can_backup:true, can_change_settings:true, can_view_overhead:false, can_edit_overhead:true },
   cashier:     { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:true, can_void_item:false, can_hold_order:true, can_adjust_stock:false, can_receive_stock:false, can_issue_stock:false, can_write_off:false, can_add_item:false, can_edit_item:false, can_view_reports:false, can_export_reports:false, can_view_cost:false, can_view_variance:false, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
   storekeeper: { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:false, can_void_item:false, can_hold_order:false, can_adjust_stock:true, can_receive_stock:true, can_issue_stock:true, can_write_off:true, can_add_item:true, can_edit_item:true, can_view_reports:false, can_export_reports:false, can_view_cost:true, can_view_variance:true, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
   waiter:      { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:false, can_void_item:false, can_hold_order:true, can_adjust_stock:false, can_receive_stock:false, can_issue_stock:false, can_write_off:false, can_add_item:false, can_edit_item:false, can_view_reports:false, can_export_reports:false, can_view_cost:false, can_view_variance:false, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
+  kitchen:     { can_delete_sale:false, can_give_discount:false, can_edit_price:false, can_split_bill:false, can_void_item:false, can_hold_order:false, can_adjust_stock:false, can_receive_stock:false, can_issue_stock:false, can_write_off:false, can_add_item:false, can_edit_item:false, can_view_reports:false, can_export_reports:false, can_view_cost:false, can_view_variance:false, can_manage_users:false, can_view_audit:false, can_backup:false, can_change_settings:false },
 };
 
 // --- USER ROW -----------------------------------------------------------------
@@ -326,7 +327,7 @@ function StaffTab({ users, setUsers, currentUser, toast }) {
   return (
     <>
       {/* Role summary cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 14, marginBottom: 24 }}>
         {ROLES.map(role => {
           const count = users.filter(u => u.role === role).length;
           return (
@@ -487,7 +488,7 @@ function PermissionsTab({ currentUser, toast }) {
     } finally { setSaving(false); }
   };
   const handleReset = () => { setMatrix(DEFAULT_MATRIX); setDirty(false); toast("Permissions reset to defaults", "success"); };
-  const countGranted = role => Object.values(matrix[role]).filter(Boolean).length;
+  const countGranted = role => Object.values(matrix[role] || {}).filter(Boolean).length;
 
   return (
     <>
@@ -498,7 +499,7 @@ function PermissionsTab({ currentUser, toast }) {
       )}
 
       {/* Role summary */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 14, marginBottom: 24 }}>
         {ROLES.map(role => (
           <div key={role} style={{ background: C.surface, borderRadius: 6, padding: "14px 16px", border: `1px solid ${C.border}`, textAlign: "center" }}>
             <div style={{ fontSize: 18, color: C.accent }}>{ROLE_SYMBOLS[role]}</div>
@@ -577,13 +578,6 @@ function PermissionsTab({ currentUser, toast }) {
 
 // --- MAIN EXPORT --------------------------------------------------------------
 export default function UsersRoles({ users, setUsers, currentUser, toast }) {
-  const [activeTab, setActiveTab] = useState("staff");
-
-  const TABS = [
-    { id: "staff",       label: "Staff Accounts" },
-    { id: "permissions", label: "Role Permissions" },
-  ];
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
@@ -595,32 +589,7 @@ export default function UsersRoles({ users, setUsers, currentUser, toast }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 4, background: C.surfaceAlt, padding: 4, borderRadius: 6, border: `1px solid ${C.border}`, alignSelf: "flex-start" }}>
-        {TABS.map(tab => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
-              display: "flex", alignItems: "center", gap: 7, padding: "8px 18px",
-              borderRadius: 4, border: "none", cursor: "pointer",
-              background: isActive ? C.surface : "transparent",
-              color: isActive ? C.textPrimary : C.textSecondary,
-              fontWeight: isActive ? 600 : 500, fontSize: 12,
-              boxShadow: isActive ? "0 1px 2px rgba(0,0,0,0.04)" : "none",
-              transition: "all 0.15s ease",
-              letterSpacing: "0.3px",
-            }}>
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {activeTab === "staff" && (
-        <StaffTab users={users} setUsers={setUsers} currentUser={currentUser} toast={toast} />
-      )}
-      {activeTab === "permissions" && (
-        <PermissionsTab currentUser={currentUser} toast={toast} />
-      )}
+      <StaffTab users={users} setUsers={setUsers} currentUser={currentUser} toast={toast} />
     </div>
   );
 }

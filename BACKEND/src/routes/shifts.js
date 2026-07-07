@@ -61,7 +61,7 @@ router.get('/', requirePermission('shift'), validateQuery(listShiftsSchema), asy
 
     const { rows } = await db.query(
       `SELECT
-         s.id, s.shift_ref, s.status, s.opening_float, s.closing_cash,
+         s.id, s.shift_ref, s.status, s.opening_float, s.closing_cash, s.closing_mpesa,
          s.opened_at, s.closed_at, s.total_sales, s.total_covers, s.notes,
          u1.name AS opened_by_name,
          u2.name AS closed_by_name
@@ -204,21 +204,22 @@ router.post('/:id/close', requirePermission('shift'), validate(closeShiftSchema)
       [shiftId]
     );
 
-    const { closing_cash, notes } = req.body;
+    const { closing_cash, closing_mpesa = 0, notes } = req.body;
 
     const shift = await db.transaction(async (client) => {
       const { rows } = await client.query(
         `UPDATE shifts
-         SET status       = 'closed',
-             closed_by    = $1,
-             closed_at    = now(),
-             closing_cash = $2,
-             total_sales  = $3,
-             total_covers = $4,
-             notes        = COALESCE($5, notes)
-         WHERE id = $6
+         SET status        = 'closed',
+             closed_by     = $1,
+             closed_at     = now(),
+             closing_cash  = $2,
+             closing_mpesa = $3,
+             total_sales   = $4,
+             total_covers  = $5,
+             notes         = COALESCE($6, notes)
+         WHERE id = $7
          RETURNING *`,
-        [req.user.sub, closing_cash, totals[0].total_sales,
+        [req.user.sub, closing_cash, closing_mpesa, totals[0].total_sales,
          totals[0].total_covers, notes || null, shiftId]
       );
 
@@ -240,14 +241,23 @@ router.post('/:id/close', requirePermission('shift'), validate(closeShiftSchema)
       [shiftId]
     );
 
+    const cashSales  = breakdown.filter(b => b.payment === 'cash')
+                                .reduce((s, b) => s + parseFloat(b.amount), 0);
+    const mpesaSales = breakdown.filter(b => /mpesa|m-pesa/i.test(b.payment))
+                                .reduce((s, b) => s + parseFloat(b.amount), 0);
+    const expected_cash  = parseFloat(shiftRows[0].opening_float) + cashSales;
+    const expected_mpesa = mpesaSales;   // M-Pesa has no float — expected = M-Pesa sales
+
     const summary = {
       total_sales:       parseFloat(totals[0].total_sales),
       total_covers:      parseInt(totals[0].total_covers),
       opening_float:     parseFloat(shiftRows[0].opening_float),
       closing_cash,
-      expected_cash:     parseFloat(shiftRows[0].opening_float) +
-                         breakdown.filter(b => b.payment === 'cash')
-                                  .reduce((s, b) => s + parseFloat(b.amount), 0),
+      closing_mpesa,
+      expected_cash,
+      expected_mpesa,
+      cash_variance:     closing_cash  - expected_cash,
+      mpesa_variance:    closing_mpesa - expected_mpesa,
       payment_breakdown: breakdown,
     };
 

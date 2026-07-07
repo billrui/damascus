@@ -14,6 +14,8 @@ import { db }      from '../config/db.js';
 import { verifyJWT, requirePermission, requireRole } from '../middleware/auth.js';
 import { validateQuery } from '../middleware/validate.js';
 import { z } from 'zod';
+import { spawn } from 'child_process';
+import { env } from '../config/env.js';
 
 const router = Router();
 router.use(verifyJWT);
@@ -240,21 +242,69 @@ router.get('/analytics', requirePermission('reports'), validateQuery(dateRangeQ)
 // ─── GET /api/reports/audit-log ───────────────────────────────────────────────
 router.get('/audit-log', requireRole('admin'), async (req, res, next) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit) || 100, 500);
-    const offset = (parseInt(req.query.page) - 1 || 0) * limit;
+    const limit  = Math.min(parseInt(req.query.limit) || 1000, 5000);
+    const { date } = req.query;
+    const hasDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date);
+
+    const params = [];
+    let where = '';
+    if (hasDate) { params.push(date); where = `WHERE a.created_at::date = $${params.length}`; }
+    params.push(limit);
 
     const { rows } = await db.query(
       `SELECT a.*, u.name AS user_name
        FROM audit_log a
        LEFT JOIN users u ON u.id = a.user_id
+       ${where}
        ORDER BY a.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $${params.length}`,
+      params
     );
 
-    const { rows: cnt } = await db.query(`SELECT COUNT(*) FROM audit_log`);
+    const { rows: cnt } = await db.query(
+      `SELECT COUNT(*) FROM audit_log a ${hasDate ? 'WHERE a.created_at::date = $1' : ''}`,
+      hasDate ? [date] : []
+    );
 
     res.json({ logs: rows, total: parseInt(cnt[0].count) });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /api/reports/backup ─── stream a real pg_dump download (admin) ───────
+router.get('/backup', requireRole('admin'), (req, res, next) => {
+  try {
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
+    const filename = `damascus_backup_${stamp}.sql`;
+
+    const dump = spawn('pg_dump', [env.DATABASE_URL, '--no-owner', '--no-privileges', '--clean', '--if-exists']);
+
+    let errBuf = '';
+    let started = false;
+
+    dump.stderr.on('data', d => { errBuf += d.toString(); });
+
+    dump.stdout.once('data', (chunk) => {
+      // Only set download headers once we know pg_dump is actually producing output
+      started = true;
+      res.setHeader('Content-Type', 'application/sql');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.write(chunk);
+      dump.stdout.pipe(res);
+    });
+
+    dump.on('error', (e) => {
+      if (!started && !res.headersSent) {
+        res.status(500).json({ error: 'Backup failed to start: ' + e.message + '. Is pg_dump installed on the server?' });
+      } else { try { res.end(); } catch {} }
+    });
+
+    dump.on('close', (code) => {
+      if (code !== 0 && !started && !res.headersSent) {
+        res.status(500).json({ error: 'Backup failed: ' + (errBuf.trim() || `pg_dump exited ${code}`) });
+      } else {
+        try { res.end(); } catch {}
+      }
+    });
   } catch (err) { next(err); }
 });
 

@@ -60,13 +60,18 @@ export async function generateReceiptPDF(sale, business) {
       .fontSize(13)
       .text(business.name, MARGIN, MARGIN, { width: CONTENT_W, align: 'center' });
 
-    doc
-      .font('Helvetica')
-      .fontSize(7.5)
-      .text(business.address, { width: CONTENT_W, align: 'center' })
-      .text(business.tel,     { width: CONTENT_W, align: 'center' });
+    if (business.tagline) {
+      doc.font('Helvetica-Oblique').fontSize(7.5)
+         .text(business.tagline, { width: CONTENT_W, align: 'center' });
+    }
 
-    if (business.vat) {
+    doc.font('Helvetica').fontSize(7.5);
+    if (business.showAddress !== false && business.address)
+      doc.text(business.address, { width: CONTENT_W, align: 'center' });
+    if (business.showPhone !== false && business.tel)
+      doc.text(business.tel, { width: CONTENT_W, align: 'center' });
+
+    if (business.showVat !== false && business.vat) {
       doc.text(`VAT No: ${business.vat}`, { width: CONTENT_W, align: 'center' });
     }
 
@@ -82,10 +87,10 @@ export async function generateReceiptPDF(sale, business) {
     row2(doc, 'Time:',     `${sale.sale_time || ''}`);
     if (sale.table_no && /^take.?away$/i.test(String(sale.table_no).trim()))
                          row2(doc, 'Order:',    'Takeaway');
-    else if (sale.table_no)
+    else if (sale.table_no && business.showTable !== false)
                          row2(doc, 'Table:',    sale.table_no);
     if (sale.customer)   row2(doc, 'Customer:', sale.customer);
-    if (sale.cashier_name) row2(doc, 'Cashier:', sale.cashier_name);
+    if (sale.cashier_name && business.showCashier !== false) row2(doc, 'Cashier:', sale.cashier_name);
     if (sale.waiter_name)  row2(doc, 'Waiter:',  sale.waiter_name);
 
     doc.moveDown(0.3);
@@ -173,6 +178,25 @@ export async function generateReceiptPDF(sale, business) {
       row2(doc, 'Incl. VAT:', fmt(sale.total));
     }
 
+    // Signature line
+    if (business.showSignature) {
+      doc.moveDown(0.8);
+      divider(doc);
+      doc.moveDown(0.5);
+      doc.font('Helvetica').fontSize(7.5).text('Signature: ______________________', { width: CONTENT_W, align: 'left' });
+    }
+
+    // Custom footer message
+    if (business.footer) {
+      doc.moveDown(0.6);
+      divider(doc);
+      doc.moveDown(0.4);
+      doc.font('Helvetica').fontSize(7.5);
+      business.footer.split('\n').forEach(line => {
+        doc.text(line, { width: CONTENT_W, align: 'center' });
+      });
+    }
+
     doc.moveDown(0.8);
     doc.end();
   });
@@ -229,8 +253,10 @@ export function generateEscPos(sale, business) {
   push(GS,  0x21, 0x00);    // normal size
   push(ESC, 0x45, 0x00);    // bold off
 
-  text(business.address.slice(0, 32)); nl();
-  if (business.tel) { text(business.tel); nl(); }
+  if (business.tagline) { text(business.tagline.slice(0, 32)); nl(); }
+  if (business.showAddress !== false && business.address) { text(business.address.slice(0, 32)); nl(); }
+  if (business.showPhone !== false && business.tel) { text(business.tel); nl(); }
+  if (business.showVat !== false && business.vat) { text(`VAT No: ${business.vat}`); nl(); }
   nl();
 
   // Left align
@@ -241,9 +267,9 @@ export function generateEscPos(sale, business) {
   text(`Date:    ${fmtSaleDate(sale.sale_date)}`); nl();
   text(`Time:    ${sale.sale_time || ''}`); nl();
   if (sale.table_no && /^take.?away$/i.test(String(sale.table_no).trim())) { text(`Order:   Takeaway`); nl(); }
-  else if (sale.table_no)    { text(`Table:   ${sale.table_no}`);     nl(); }
+  else if (sale.table_no && business.showTable !== false) { text(`Table:   ${sale.table_no}`); nl(); }
   if (sale.customer)    { text(`Customer: ${sale.customer}`);    nl(); }
-  if (sale.cashier_name){ text(`Cashier: ${sale.cashier_name}`); nl(); }
+  if (sale.cashier_name && business.showCashier !== false){ text(`Cashier: ${sale.cashier_name}`); nl(); }
   line();
 
   // Items
@@ -274,17 +300,29 @@ export function generateEscPos(sale, business) {
   text(`Payment: ${(sale.payment || '').toUpperCase()}`); nl();
   if (sale.payment_ref) { text(`Ref: ${sale.payment_ref}`); nl(); }
 
+  // Signature line
+  if (business.showSignature) {
+    nl(); line();
+    text('Signature: ___________________'); nl();
+  }
+
   nl();
 
-  // Center + footer
+  // Center + custom footer (falls back to a thank-you)
   push(ESC, 0x61, 0x01);
-  text('Thank you for dining with us!'); nl();
+  const footerText = business.footer || 'Thank you for dining with us!';
+  footerText.split('\n').forEach(l => { text(l.slice(0, 32)); nl(); });
   nl(); nl(); nl();
 
-  // Cut paper (full cut)
-  push(GS, 0x56, 0x00);
+  // Cut paper (full cut) — or just feed if paper-cut disabled
+  if (business.paperCut !== false) push(GS, 0x56, 0x00);
+  else { nl(); nl(); }
 
-  return Buffer.from(cmds);
+  // Repeat for extra copies
+  const copies = Math.max(1, Math.min(parseInt(business.copies) || 1, 3));
+  let out = cmds;
+  for (let i = 1; i < copies; i++) out = out.concat(cmds);
+  return Buffer.from(out);
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────

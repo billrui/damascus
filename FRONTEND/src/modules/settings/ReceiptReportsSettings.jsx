@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { C, Card, CardHeader, CardBody, FormRow, Input, Select, Toggle, Btn, Badge, ConfirmModal } from "./shared";
+import { settingsApi } from "../../api/index.js";
 
 // --- RECEIPT SETTINGS ---------------------------------------------------------
 export function ReceiptSettings({ toast, businessProfile }) {
@@ -22,8 +23,59 @@ export function ReceiptSettings({ toast, businessProfile }) {
   });
 
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const set = (key, val) => { setSettings(f => ({ ...f, [key]: val })); setDirty(true); };
-  const handleSave = () => { setDirty(false); toast("Receipt settings saved", "success"); };
+
+  // Load saved receipt settings
+  useEffect(() => {
+    settingsApi.get().then(s => {
+      if (!s) return;
+      const b = (k, d) => s[k] !== undefined ? s[k] === "true" || s[k] === true : d;
+      setSettings(f => ({
+        ...f,
+        footerMessage:     s.receipt_footer    ?? f.footerMessage,
+        showLogo:          b("receipt_show_logo",      f.showLogo),
+        showAddress:       b("receipt_show_address",   f.showAddress),
+        showPhone:         b("receipt_show_phone",     f.showPhone),
+        showVatNumber:     b("receipt_show_vat",       f.showVatNumber),
+        showCashierName:   b("receipt_show_cashier",   f.showCashierName),
+        showTableNumber:   b("receipt_show_table",     f.showTableNumber),
+        showItemCodes:     b("receipt_show_itemcodes", f.showItemCodes),
+        showSignatureLine: b("receipt_show_signature", f.showSignatureLine),
+        paperCut:          b("receipt_paper_cut",      f.paperCut),
+        autoPrint:         b("receipt_auto_print",     f.autoPrint),
+        printCopies:       s.receipt_copies       ? parseInt(s.receipt_copies) || 1 : f.printCopies,
+        printerType:       s.receipt_printer_type ?? f.printerType,
+      }));
+    }).catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await settingsApi.update({
+        receipt_footer:        settings.footerMessage,
+        receipt_show_logo:      String(settings.showLogo),
+        receipt_show_address:   String(settings.showAddress),
+        receipt_show_phone:     String(settings.showPhone),
+        receipt_show_vat:       String(settings.showVatNumber),
+        receipt_show_cashier:   String(settings.showCashierName),
+        receipt_show_table:     String(settings.showTableNumber),
+        receipt_show_itemcodes: String(settings.showItemCodes),
+        receipt_show_signature: String(settings.showSignatureLine),
+        receipt_paper_cut:      String(settings.paperCut),
+        receipt_auto_print:     String(settings.autoPrint),
+        receipt_copies:         String(settings.printCopies),
+        receipt_printer_type:   settings.printerType,
+      });
+      setDirty(false);
+      toast("Receipt settings saved", "success");
+    } catch (e) {
+      toast(e?.response?.data?.error || "Couldn't save settings", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const previewLines = [
     settings.showLogo ? "DAMASCUS HOTEL" : null,
@@ -69,15 +121,8 @@ export function ReceiptSettings({ toast, businessProfile }) {
             <CardHeader title="Receipt Header" />
             <CardBody>
               <div style={{ background: `${C.blue}15`, borderRadius: 4, padding: "8px 14px", fontSize: 11, color: C.blue, fontWeight: 500, marginBottom: 14 }}>
-                Header text is pre-filled from Business Profile. Edit here to customise the receipt independently.
+                Your hotel name and tagline come from <strong>Business Profile</strong>. Change them there. Below, choose which details print.
               </div>
-              <FormRow label="Header Text" hint="Main business name on receipt">
-                <Input value={settings.headerText} onChange={e => set("headerText", e.target.value)} />
-              </FormRow>
-              <FormRow label="Sub-header" hint="Tagline or slogan">
-                <Input value={settings.subHeaderText} onChange={e => set("subHeaderText", e.target.value)} />
-              </FormRow>
-              <FormRow label="Show Logo"><Toggle checked={settings.showLogo} onChange={v => set("showLogo", v)} /></FormRow>
               <FormRow label="Show Address"><Toggle checked={settings.showAddress} onChange={v => set("showAddress", v)} /></FormRow>
               <FormRow label="Show Phone"><Toggle checked={settings.showPhone} onChange={v => set("showPhone", v)} /></FormRow>
               <FormRow label="Show VAT/KRA Number"><Toggle checked={settings.showVatNumber} onChange={v => set("showVatNumber", v)} /></FormRow>

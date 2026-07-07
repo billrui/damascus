@@ -18,26 +18,28 @@ const ACTION_TYPES = {
 };
 
 export default function AuditLogs({ currentUser }) {
+  const todayStr = new Date().toISOString().split("T")[0];
   const [logs,         setLogs]         = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState(null);
   const [search,       setSearch]       = useState("");
   const [filterAction, setFilterAction] = useState("all");
-  const [filterDate,   setFilterDate]   = useState("");
+  const [filterDate,   setFilterDate]   = useState(todayStr);
   const [page,         setPage]         = useState(1);
   const PER_PAGE = 15;
 
   useEffect(() => {
     if (currentUser.role !== "admin") return;
     setLoading(true);
-    reportsApi.auditLog({ limit: 500 })
+    setPage(1);
+    reportsApi.auditLog(filterDate ? { date: filterDate, limit: 2000 } : { limit: 1000 })
       .then(data => {
         setLogs(data.logs || []);
         setError(null);
       })
       .catch(err => setError(err.message || "Failed to load audit log"))
       .finally(() => setLoading(false));
-  }, [currentUser.role]);
+  }, [currentUser.role, filterDate]);
 
   const filtered = useMemo(() => {
     return logs.filter(log => {
@@ -101,9 +103,14 @@ export default function AuditLogs({ currentUser }) {
             { value: "all", label: "All Actions" },
             ...Object.entries(ACTION_TYPES).map(([v, { label }]) => ({ value: v, label })),
           ]} />
-          <Input value={filterDate} onChange={e => { setFilterDate(e.target.value); setPage(1); }} type="date" style={{ maxWidth: 180 }} />
-          {(search || filterAction !== "all" || filterDate) && (
-            <Btn variant="ghost" size="sm" onClick={() => { setSearch(""); setFilterAction("all"); setFilterDate(""); setPage(1); }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Btn variant="ghost" size="sm" onClick={() => { const d = new Date((filterDate || today) + "T00:00:00"); d.setDate(d.getDate() - 1); setFilterDate(d.toISOString().split("T")[0]); }}>←</Btn>
+            <Input value={filterDate} onChange={e => { setFilterDate(e.target.value); setPage(1); }} type="date" max={today} style={{ maxWidth: 170 }} />
+            <Btn variant="ghost" size="sm" disabled={filterDate >= today} onClick={() => { const d = new Date((filterDate || today) + "T00:00:00"); d.setDate(d.getDate() + 1); const ns = d.toISOString().split("T")[0]; if (ns <= today) setFilterDate(ns); }}>→</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => setFilterDate(today)}>Today</Btn>
+          </div>
+          {(search || filterAction !== "all") && (
+            <Btn variant="ghost" size="sm" onClick={() => { setSearch(""); setFilterAction("all"); setPage(1); }}>
               Clear
             </Btn>
           )}

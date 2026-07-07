@@ -90,12 +90,13 @@ router.post('/', requirePermission('settings'), validate(createUserSchema), asyn
 
     const pin_hash = await hashPin(pin);
 
-    // Default permissions from role if not specified
+    // Default permissions from role if not specified — SOURCE OF TRUTH.
+    // Only lists permissions the backend actually enforces via requirePermission.
     const DEFAULT_PERMISSIONS = {
-      admin:       ['dashboard','pos','shift','inventory','reports','expiry','variance','settings','wastage','items','kds'],
-      manager:     ['dashboard','pos','shift','inventory','reports','expiry','variance','wastage','settings','items','kds'],
-      cashier:     ['dashboard','pos','shift'],
-      storekeeper: ['dashboard','inventory','expiry','wastage','items'],
+      admin:       ['dashboard','shift','inventory','inventory_readonly','items','settings','wastage','variance','reports','expiry'],
+      manager:     ['dashboard','pos','shift','inventory','inventory_readonly','items','settings','wastage','variance','reports','expiry','kds'],
+      cashier:     ['dashboard','pos','shift','inventory','inventory_readonly','expiry','wastage'],
+      storekeeper: ['dashboard','inventory','inventory_readonly','expiry','wastage','items'],
       waiter:      ['pos'],
       kitchen:     ['kds'],
     };
