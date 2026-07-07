@@ -156,6 +156,48 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
   const [errors,      setErrors]      = useState({});
   const [saved,       setSaved]       = useState(false);
   const [apiError,    setApiError]    = useState("");
+  const [image,       setImage]       = useState(null);   // base64 thumbnail
+  const fileRef = useRef(null);
+
+  // Read a chosen photo, shrink it to a small square thumbnail (keeps the DB light)
+  const handleImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setApiError("");
+    if (file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name)) {
+      setApiError("That photo is in HEIC format (common on iPhones). Please choose a JPG or PNG, or set your phone camera to 'Most Compatible'.");
+      return;
+    }
+    if (!file.type.startsWith("image/")) { setApiError("Please choose an image file (JPG or PNG)."); return; }
+    const reader = new FileReader();
+    reader.onerror = () => setApiError("Couldn't read that file — try another photo.");
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onerror = () => setApiError("That image couldn't be loaded. Try a JPG or PNG photo.");
+      img.onload = () => {
+        try {
+          if (!img.width || !img.height) { setApiError("That image appears empty. Try another photo."); return; }
+          const size = 220;
+          const canvas = document.createElement("canvas");
+          canvas.width = size; canvas.height = size;
+          const ctx = canvas.getContext("2d");
+          const scale = Math.max(size / img.width, size / img.height);
+          const w = img.width * scale, h = img.height * scale;
+          ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+          const data = canvas.toDataURL("image/jpeg", 0.72);
+          if (!data || data.length < 200 || !data.startsWith("data:image")) {
+            setApiError("Couldn't process that photo. Try a different JPG or PNG.");
+            return;
+          }
+          setImage(data);
+        } catch (err) {
+          setApiError("Couldn't process that photo (unsupported format). Try a JPG or PNG.");
+        }
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   useEffect(() => {
     settingsApi.get()
@@ -214,6 +256,7 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
         cost:        cp || undefined,
         description: description || undefined,
         bestseller,
+        image:       image || undefined,
       });
 
       setSaved(true);
@@ -245,6 +288,31 @@ export default function NewItemForm({ onSave, onCancel, liveIngredients = [] }) 
 
         {/* ── Basic Details ── */}
         <div style={{ fontSize:11, fontWeight:600, color:"#C5A059", marginBottom:10, letterSpacing:0.3, textTransform:"uppercase" }}>Basic Details</div>
+
+        {/* Product photo */}
+        <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:18 }}>
+          <div style={{ width:88, height:88, borderRadius:10, border:"1px solid #E5E0D5", background:"#FAF8F3", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            {image
+              ? <img src={image} alt="preview" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+              : <span style={{ fontSize:10, color:"#B8B0A0", textAlign:"center", padding:6 }}>No photo</span>}
+          </div>
+          <div>
+            <div style={{ fontSize:12, fontWeight:600, color:"#4A4A4A", marginBottom:2 }}>Product Photo</div>
+            <div style={{ fontSize:10.5, color:"#9CA3AF", marginBottom:8 }}>Shown on the POS so staff spot it fast (e.g. a soda bottle, fish, ugali). Auto-shrunk to a small thumbnail.</div>
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleImage} style={{ display:"none" }} />
+            <div style={{ display:"flex", gap:8 }}>
+              <button type="button" onClick={() => fileRef.current?.click()} style={{ padding:"6px 14px", borderRadius:6, border:"1px solid #C5A059", background:"#fff", color:"#8A6D1B", fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                {image ? "Change photo" : "Upload photo"}
+              </button>
+              {image && (
+                <button type="button" onClick={() => { setImage(null); if (fileRef.current) fileRef.current.value = ""; }} style={{ padding:"6px 12px", borderRadius:6, border:"1px solid #E5E0D5", background:"#fff", color:"#8B3A3A", fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:14, marginBottom:18 }}>
           <Field label="Item Name" required error={errors.name}>
             <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Masala Tea, Pilau Special"

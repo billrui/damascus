@@ -464,7 +464,7 @@ export default function ManagerPOS({
                             background:T.card, transition:"all .12s",
                             boxShadow:qty>0?`0 0 0 1px ${T.amber}33`:undefined,
                           }}>
-                            {/* Item colour bar instead of emoji */}
+                            {/* Product image, or colour bar with initials */}
                             <div style={{
                               height:mobile?56:70, position:"relative",
                               background: (menuStock[item.id] === 0)
@@ -474,7 +474,9 @@ export default function ManagerPOS({
                                   : "linear-gradient(135deg,#1e293b,#334155)",
                               display:"flex", alignItems:"center", justifyContent:"center",
                             }}>
-                              {/* Item initial / short name */}
+                              {item.image ? (
+                                <img src={item.image} alt={item.name} style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                              ) : (
                               <div style={{
                                 fontSize:mobile?18:22, fontWeight:800,
                                 color:qty>0?"rgba(255,255,255,0.9)":"rgba(255,255,255,0.35)",
@@ -482,6 +484,7 @@ export default function ManagerPOS({
                               }}>
                                 {item.name.slice(0,2).toUpperCase()}
                               </div>
+                              )}
                               {qty>0 && (
                                 <div style={{
                                   position:"absolute", top:5, right:5,

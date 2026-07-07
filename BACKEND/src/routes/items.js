@@ -39,6 +39,7 @@ const createItemSchema = z.object({
   original_price: z.coerce.number().optional(),
   brand:          z.string().max(100).optional(),
   batch_size:     z.coerce.number().int().positive().default(1),
+  image:          z.string().max(600000).optional(),
   recipe:         z.array(recipeLineSchema).optional(),
 });
 
@@ -129,14 +130,14 @@ router.post('/', requirePermission('items'), validate(createItemSchema), async (
       const { rows } = await client.query(
         `INSERT INTO menu_items
            (id, name, category, price, cost, emoji, description,
-            bestseller, on_sale, original_price, brand, batch_size, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            bestseller, on_sale, original_price, brand, batch_size, image, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          RETURNING *`,
         [itemData.id, itemData.name, itemData.category || null,
          itemData.price, itemData.cost || null, itemData.emoji || null,
          itemData.description || null, itemData.bestseller, itemData.on_sale,
          itemData.original_price || null, itemData.brand || null,
-         itemData.batch_size || 1, req.user.sub]
+         itemData.batch_size || 1, itemData.image || null, req.user.sub]
       );
 
       // Insert recipe if provided
@@ -179,7 +180,7 @@ router.patch('/:id', requirePermission('items'), validate(updateItemSchema), asy
     let   idx    = 1;
 
     const cols = ['name','category','price','cost','emoji','description',
-                  'bestseller','on_sale','original_price','brand','batch_size','active'];
+                  'bestseller','on_sale','original_price','brand','batch_size','image','active'];
 
     for (const col of cols) {
       if (updates[col] !== undefined) {

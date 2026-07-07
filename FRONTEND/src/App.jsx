@@ -9,10 +9,8 @@ import { Sidebar, Topbar, SidebarOverlay } from "./components/Layout.jsx";
 import DashboardView      from "./modules/DashboardView.jsx";
 import ProductionScreen   from "./modules/ProductionScreen.jsx";
 import CashierDashboard from "./modules/CashierDashboard.jsx";
-import POSView        from "./modules/POSView.jsx";
 import WaiterPOS      from "./modules/WaiterPOS.jsx";
 import CashierPOS     from "./modules/CashierPOS.jsx";
-import ManagerPOS     from "./modules/ManagerPOS.jsx";
 import KitchenDisplay from "./modules/KitchenDisplay.jsx";
 import { InventoryView, InventoryReadOnlyView, ReceiveStockView, IssueStockView } from "./modules/StockModules.jsx";
 import { ExpiryView, VarianceView, WastageView } from "./modules/AlertModules.jsx";
@@ -132,19 +130,8 @@ export default function RoyalPalmApp() {
         if (user.role === "manager")
           return <WaiterPOS user={user} menuItems={menuItems} holdList={holdList}
             setHoldList={setHoldList} openInvoices={openInvoices} setOpenInvoices={setOpenInvoices} />;
-        if (user.role === "admin")
-          return <ManagerPOS user={user} menuItems={menuItems} holdList={holdList}
-            setHoldList={setHoldList} openInvoices={openInvoices} setOpenInvoices={setOpenInvoices}
-            sales={sales} setSales={setSales} batches={batches} setBatches={setBatches}
-            recipes={recipes} ingredients={ingredients}
-            hhApplied={hhApplied} setHhApplied={setHhApplied}
-            hhDiscount={hhDiscount} setHhDiscount={setHhDiscount} />;
-        return <POSView sales={sales} setSales={setSales} batches={batches}
-          setBatches={setBatches} user={user} holdList={holdList} setHoldList={setHoldList}
-          menuItems={menuItems} recipes={recipes} ingredients={ingredients}
-          openInvoices={openInvoices} setOpenInvoices={setOpenInvoices}
-          hhApplied={hhApplied} setHhApplied={setHhApplied}
-          hhDiscount={hhDiscount} setHhDiscount={setHhDiscount} />;
+        return <WaiterPOS user={user} menuItems={menuItems} holdList={holdList}
+          setHoldList={setHoldList} openInvoices={openInvoices} setOpenInvoices={setOpenInvoices} />;
 
       case "shift":
         return <ShiftView sales={sales} user={user} shifts={shifts} setShifts={setShifts}

@@ -285,14 +285,13 @@ function ItemProfileModal({ item, onClose }) {
         </div>
         <div style={{ padding: 24, overflowY: "auto" }}>
           <div style={{ textAlign: "center", marginBottom: 20 }}>
-            <div style={{ 
-              fontSize: 40, 
-              marginBottom: 8,
-              fontFamily: "'Cormorant Garamond', serif",
-              fontWeight: 500,
-            }}>
-              {item.emoji || "-"}
-            </div>
+            {item.image ? (
+              <img src={item.image} alt={item.name} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 10, marginBottom: 8 }} />
+            ) : (
+              <div style={{ fontSize: 40, marginBottom: 8, fontFamily: "'Cormorant Garamond', serif", fontWeight: 500 }}>
+                {item.emoji || "-"}
+              </div>
+            )}
             <div style={{ fontSize: 18, fontWeight: 600, color: "#1A1A1A" }}>{item.name}</div>
             <div style={{ fontSize: 11, color: "#7A7A7A", marginTop: 4 }}>
               {item.description || "No description available"}
@@ -674,6 +673,47 @@ function EditItemModal({ item, onClose, onSave }) {
     active:         item.active !== false,
   });
   const [saving, setSaving] = useState(false);
+  const [image, setImage] = useState(item.image || null);
+  const [imgErr, setImgErr] = useState("");
+  const fileRef = useRef(null);
+  const handleImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImgErr("");
+    if (file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name)) {
+      setImgErr("HEIC photo (iPhone). Please use a JPG or PNG, or set the camera to 'Most Compatible'.");
+      return;
+    }
+    if (!file.type.startsWith("image/")) { setImgErr("Please choose a JPG or PNG image."); return; }
+    const reader = new FileReader();
+    reader.onerror = () => setImgErr("Couldn't read that file — try another photo.");
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onerror = () => setImgErr("That image couldn't be loaded. Try a JPG or PNG.");
+      img.onload = () => {
+        try {
+          if (!img.width || !img.height) { setImgErr("That image appears empty."); return; }
+          const size = 220;
+          const canvas = document.createElement("canvas");
+          canvas.width = size; canvas.height = size;
+          const ctx = canvas.getContext("2d");
+          const scale = Math.max(size / img.width, size / img.height);
+          const w = img.width * scale, h = img.height * scale;
+          ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+          const data = canvas.toDataURL("image/jpeg", 0.72);
+          if (!data || data.length < 200 || !data.startsWith("data:image")) {
+            setImgErr("Couldn't process that photo. Try a different JPG or PNG.");
+            return;
+          }
+          setImage(data);
+        } catch (err) {
+          setImgErr("Couldn't process that photo (unsupported format). Try a JPG or PNG.");
+        }
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const CATS = ["beverages","starters","mains","pasta","desserts","other"];
   const INP = { width:"100%", padding:"8px 10px", border:"1px solid #E5E0D5", borderRadius:4, fontSize:13, boxSizing:"border-box", background:"#fff", fontFamily:"inherit" };
@@ -737,9 +777,10 @@ function EditItemModal({ item, onClose, onSave }) {
         price: parseFloat(form.price) || 0,
         description: form.description, bestseller: form.bestseller,
         active: form.active,
+        image: image || undefined,
       });
     } catch (e) {
-      setRecipeErr(e?.response?.data?.error || "Couldn't save — try again.");
+      setRecipeErr(e?.response?.data?.error || e?.message || "Couldn't save — try again.");
       setSaving(false);
     }
   };
@@ -756,6 +797,20 @@ function EditItemModal({ item, onClose, onSave }) {
         </div>
         <div style={{ overflowY:"auto", padding:"20px 22px", flex:1 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"14px 16px" }}>
+            <div style={{ gridColumn:"1/-1", display:"flex", alignItems:"center", gap:14 }}>
+              <div style={{ width:72, height:72, borderRadius:8, border:"1px solid #E5E0D5", background:"#FAF8F3", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                {image ? <img src={image} alt="preview" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <span style={{ fontSize:9, color:"#B8B0A0" }}>No photo</span>}
+              </div>
+              <div>
+                <label style={LBL}>Product Photo</label>
+                <input ref={fileRef} type="file" accept="image/*" onChange={handleImage} style={{ display:"none" }} />
+                <div style={{ display:"flex", gap:8 }}>
+                  <button type="button" onClick={() => fileRef.current?.click()} style={{ padding:"6px 12px", borderRadius:5, border:"1px solid #C5A059", background:"#fff", color:"#8A6D1B", fontSize:11, fontWeight:600, cursor:"pointer" }}>{image ? "Change" : "Upload"}</button>
+                  {image && <button type="button" onClick={() => { setImage(null); if (fileRef.current) fileRef.current.value = ""; }} style={{ padding:"6px 12px", borderRadius:5, border:"1px solid #E5E0D5", background:"#fff", color:"#8B3A3A", fontSize:11, fontWeight:600, cursor:"pointer" }}>Remove</button>}
+                </div>
+                {imgErr && <div style={{ fontSize:10.5, color:"#B91C1C", marginTop:6, maxWidth:260 }}>{imgErr}</div>}
+              </div>
+            </div>
             <div style={{ gridColumn:"1/-1" }}>
               <label style={LBL}>Item Name *</label>
               <input value={form.name} onChange={e=>set("name",e.target.value)} style={INP} placeholder="e.g. Grilled Chicken" />
@@ -1000,13 +1055,14 @@ function ItemsTable({ items, setItems, batches, setBatches, ingredients, onNewIt
       {editItem    && (
         <EditItemModal item={editItem} onClose={() => setEditItem(null)}
           onSave={async (updates) => {
+            const { itemsApi } = await import("../api/index.js");
+            // Real API call — if THIS fails, let the modal show an error.
+            const saved = await itemsApi.update(editItem.id, updates);
+            // Success. Refresh the lists defensively so a UI glitch can't look like a save failure.
             try {
-              const { itemsApi } = await import("../api/index.js");
-              const saved = await itemsApi.update(editItem.id, updates);
-              setItems(p => p.map(x => x.id === editItem.id ? { ...x, ...saved } : x));
-            } catch (err) {
-              setItems(p => p.map(x => x.id === editItem.id ? { ...x, ...updates } : x));
-            }
+              setItems(p => p.map(x => x.id === editItem.id ? { ...x, ...(saved || updates) } : x));
+              if (propSetMenuItems) propSetMenuItems(p => (p || []).map(x => x.id === editItem.id ? { ...x, ...(saved || updates) } : x));
+            } catch (_) { /* list refresh only — item is already saved */ }
             setEditItem(null);
           }}
         />
@@ -1061,6 +1117,7 @@ export default function ItemsView({ subView: propSubView = "new", batches, setBa
       price: payload.price || payload.sellingPrice || 0,
       cost: payload.cost || payload.costPrice || 0,
       emoji: payload.emoji || "-",
+      image: payload.image || null,
       description: payload.description || "",
       onSale: payload.isOnSale || false,
       bestseller: payload.isBestseller || false,

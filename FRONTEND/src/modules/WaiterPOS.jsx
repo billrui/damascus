@@ -902,7 +902,9 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                     cursor:"pointer",textAlign:"center",transition:"border-color .12s",position:"relative",
                   }}>
                     {q>0&&<div style={{position:"absolute",top:6,right:6,background:T.amber,color:T.bg,borderRadius:"50%",width:20,height:20,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{q}</div>}
-                    <div style={{fontSize:30,marginBottom:6}}>{item.emoji||"🍽"}</div>
+                    {item.image
+                      ? <img src={item.image} alt={item.name} style={{width:mobile?48:60,height:mobile?48:60,objectFit:"cover",borderRadius:8,marginBottom:6}} />
+                      : <div style={{fontSize:30,marginBottom:6}}>{item.emoji||"🍽"}</div>}
                     <div style={{fontSize:12,fontWeight:600,color:T.textPrimary,marginBottom:3,lineHeight:1.3}}>{item.name}</div>
                     <div style={{fontSize:12,fontWeight:700,color:T.amber}}>{fmt(item.price)}</div>
                   </div>
