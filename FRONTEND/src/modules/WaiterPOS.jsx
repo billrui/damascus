@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { MENU_CATEGORIES, TAX, SVC } from "../data";
 import { fmt } from "../utils";
+import { settingsApi } from "../api/index.js";
 import { T, pillBtn, stepBtn, actionBtn, overlay } from "../posTheme";
 import { useSocket } from "../hooks/useSocket.js";
 import { useBreakpoint } from "../hooks/useBreakpoint.js";
@@ -96,6 +97,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
 
   const [table,      setTable]      = useState("T01");
   const [person,     setPerson]     = useState("P1");
+  const [needPerson, setNeedPerson] = useState(false);   // warns when adding items with no person
   const [persons,    setPersons]    = useState({});          // { "T01": ["P1","P2"] }
   const [carts,      setCarts]      = useState({});          // { "T01-P1": [items] }
   const [category,   setCategory]   = useState("all");
@@ -237,6 +239,12 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   const [composedBills, setComposedBills] = useState([]);    // [{ id, personIds, items, subtotal, total }]
   const [billMode,      setBillMode]      = useState("separate"); // separate | together
   const [hhPct,         setHhPct]         = useState(0);          // Happy Hour: discount value
+  const [hhEnabled,     setHhEnabled]     = useState(false);      // Happy Hour on/off (manager sets it, shared)
+  const [hhScope,       setHhScope]       = useState("all");      // "all" | "items"
+  const [hhItems,       setHhItems]       = useState([]);         // menu item ids eligible (when scope==="items")
+  const [hhConfigOpen,  setHhConfigOpen]  = useState(false);      // manager's setup modal
+  const [hhDraft,       setHhDraft]       = useState({ type:"percent", value:0, scope:"all", items:[] });
+  const [hhBusy,        setHhBusy]        = useState(false);
   const [hhType,        setHhType]        = useState("percent");  // "percent" | "fixed" (KES)
   const [billBusy,      setBillBusy]      = useState(false);
   const [billErr,       setBillErr]       = useState("");
@@ -252,6 +260,7 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
   // Awaiting Payment tab
   const [awaitSearch, setAwaitSearch] = useState("");
   const [paidFlash,   setPaidFlash]   = useState([]);   // [{ table, ts }] transient PAID ✓ rows
+  const [gateMsg,     setGateMsg]     = useState("");   // shown when tapping items before a person is chosen
   const [paidTables,  setPaidTables]  = useState({});   // { table: true } — a bill was paid this session (blocks recall)
 
   const parseItems = (raw) => Array.isArray(raw) ? raw
@@ -289,7 +298,14 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     const holdIds = [...new Set(persons.flatMap(p => p.holdIds || []))];
     const sub     = items.reduce((a,i)=>a + i.price*i.qty, 0);
     const v       = Math.max(0, parseFloat(val) || 0);
-    let discount  = type === "percent" ? sub * Math.min(100, v) / 100 : Math.min(v, sub);
+    // Happy Hour applies automatically while ON — to the whole bill, or only to
+    // the manager's chosen items.
+    const eligible = !hhEnabled ? 0
+      : hhScope === "items"
+        ? items.filter(i => hhItems.includes(i.id) || hhItems.includes(i.menuId)).reduce((a,i)=>a + i.price*i.qty, 0)
+        : sub;
+    let discount  = !hhEnabled ? 0
+      : (type === "percent" ? eligible * Math.min(100, v) / 100 : Math.min(v, eligible));
     discount      = Math.round(discount);
     const net     = sub - discount;
     return {
@@ -313,7 +329,6 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
 
   const closeBill = () => {
     setBillTarget(null); setComposedBills([]); setCustomSel([]); setBillMode("separate");
-    setHhPct(0); setHhType("percent");
     setBillBusy(false); setBillErr("");
   };
 
@@ -447,7 +462,68 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
     return order.map(t => m[t]);
   })();
 
-  const addToCart  = item => setCart(p => { const ex = p.find(c => c.id===item.id); return ex ? p.map(c=>c.id===item.id?{...c,qty:c.qty+1}:c) : [...p,{...item,qty:1,note:""}]; });
+  // Happy Hour is a shared setting — load it, and poll so a waiter's screen
+  // reflects the manager's terms within a few seconds.
+  useEffect(() => {
+    let on = true;
+    const load = () => settingsApi.get()
+      .then(s => {
+        if (!on || !s) return;
+        setHhEnabled(s.happy_hour_enabled === "true");
+        setHhType(s.happy_hour_type || "percent");
+        setHhPct(parseFloat(s.happy_hour_value) || 0);
+        setHhScope(s.happy_hour_scope || "all");
+        try { setHhItems(JSON.parse(s.happy_hour_items || "[]")); } catch { setHhItems([]); }
+      })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 8000);
+    return () => { on = false; clearInterval(t); };
+  }, []);
+
+  // Manager taps the header button: if ON, turn off; if OFF, open the setup modal.
+  const onHappyHourButton = () => {
+    if (hhEnabled) { turnOffHappyHour(); }
+    else { setHhDraft({ type: hhType || "percent", value: hhPct || 0, scope: hhScope || "all", items: hhItems || [] }); setHhConfigOpen(true); }
+  };
+
+  const turnOffHappyHour = async () => {
+    setHhBusy(true); setHhEnabled(false);
+    try { await settingsApi.update({ happy_hour_enabled: "false" }); }
+    catch (_) { setHhEnabled(true); }
+    finally { setHhBusy(false); }
+  };
+
+  // Manager confirms terms → save to shared settings and turn on.
+  const confirmHappyHour = async () => {
+    const d = hhDraft;
+    const val = Math.max(0, parseFloat(d.value) || 0);
+    if (val <= 0) { return; }
+    if (d.scope === "items" && (!d.items || d.items.length === 0)) { return; }
+    setHhBusy(true);
+    try {
+      await settingsApi.update({
+        happy_hour_enabled: "true",
+        happy_hour_type:    d.type,
+        happy_hour_value:   String(val),
+        happy_hour_scope:   d.scope,
+        happy_hour_items:   JSON.stringify(d.scope === "items" ? d.items : []),
+      });
+      setHhType(d.type); setHhPct(val); setHhScope(d.scope);
+      setHhItems(d.scope === "items" ? d.items : []);
+      setHhEnabled(true); setHhConfigOpen(false);
+    } catch (_) {} finally { setHhBusy(false); }
+  };
+
+  const addToCart  = item => {
+    // Block adding items until a person is actually selected at this table
+    if (!person || !tablePersons.includes(person)) {
+      setNeedPerson(true);
+      setTimeout(() => setNeedPerson(false), 2400);
+      return;
+    }
+    setCart(p => { const ex = p.find(c => c.id===item.id); return ex ? p.map(c=>c.id===item.id?{...c,qty:c.qty+1}:c) : [...p,{...item,qty:1,note:""}]; });
+  };
   const updateQty  = (id,d) => setCart(p => p.map(c=>c.id===id?{...c,qty:Math.max(0,c.qty+d)}:c).filter(c=>c.qty>0));
   const removeItem = id => setCart(p => p.filter(c=>c.id!==id));
   const inCart     = id => cart.find(c=>c.id===id)?.qty||0;
@@ -607,6 +683,15 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
         <div style={{padding:"10px 12px",borderBottom:"1px solid "+T.border}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <div style={{fontSize:13,fontWeight:800,color:T.amber}}>WAITER POS</div>
+            {(user?.role==="manager"||user?.role==="admin") && (
+              <button onClick={onHappyHourButton} disabled={hhBusy} title="Set and turn on the Happy Hour discount for all staff" style={{
+                display:"flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontFamily:T.font,
+                fontSize:11,fontWeight:700,border:"1px solid "+(hhEnabled?T.amber:T.border),
+                background:hhEnabled?T.amber:"transparent",color:hhEnabled?"#fff":T.textSecondary,
+              }}>
+                🍹 Happy Hour {hhEnabled?"ON":"OFF"}
+              </button>
+            )}
           </div>
 
           {/* Table grid — numbered tables in an even 4-column grid */}
@@ -1265,7 +1350,9 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
                       const q = cart.find(c=>c.id===item.id)?.qty||0;
                       return (
                         <div key={item.id} style={{display:"flex",alignItems:"center",gap:12,background:T.surface,border:"1px solid "+T.border,borderRadius:14,padding:"12px 14px",marginBottom:9}}>
-                          <div style={{width:40,height:40,borderRadius:10,background:T.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{item.emoji||"🍽"}</div>
+                          <div style={{width:40,height:40,borderRadius:10,background:T.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0,overflow:"hidden"}}>
+                            {item.image ? <img src={item.image} alt={item.name} style={{width:"100%",height:"100%",objectFit:"cover"}} /> : (item.emoji||"🍽")}
+                          </div>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:14,fontWeight:700,color:T.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
                             <div style={{fontSize:13,color:C.amber,fontWeight:800}}>KES {fmt(item.price)}</div>
@@ -1494,35 +1581,14 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
               })}
             </div>
 
-            {/* Happy Hour — whole-order discount (% or KES) */}
-            <div style={{marginBottom:14,padding:"10px 12px",borderRadius:8,border:"1px solid "+(hhPct>0?T.amber:T.border),background:hhPct>0?T.amber+"14":"transparent"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                <span style={{fontSize:12,fontWeight:700,color:hhPct>0?T.amber:T.textSecondary,whiteSpace:"nowrap"}}>🍹 Happy Hour</span>
-                {/* type toggle */}
-                <div style={{display:"flex",gap:0,marginLeft:"auto",border:"1px solid "+T.border,borderRadius:6,overflow:"hidden"}}>
-                  {[["percent","%"],["fixed","KES"]].map(([t,l])=>(
-                    <button key={t} onClick={()=>setHhTypeAnd(t)} style={{
-                      padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,border:"none",
-                      background:hhType===t?T.amber:"transparent",color:hhType===t?"#fff":T.textSecondary,
-                    }}>{l}</button>
-                  ))}
+            {/* Happy Hour applied automatically (manager-set). Read-only for the waiter. */}
+            {hhEnabled && composedBills.some(b=>b.discount>0) && (
+              <div style={{marginBottom:14,padding:"10px 12px",borderRadius:8,border:"1px solid "+T.amber,background:T.amber+"14"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,fontWeight:700,color:T.amber}}>
+                  🍹 Happy Hour applied — {hhType==="percent" ? hhPct+"% off" : "KES "+hhPct+" off"} {hhScope==="items" ? "on selected items" : "the whole bill"}
                 </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                {(hhType==="percent" ? [0,10,15,20] : [0,50,100,200]).map(v=>(
-                  <button key={v} onClick={()=>setHhValAnd(v)} style={{
-                    padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,
-                    border:"1px solid "+(Number(hhPct)===v?T.amber:T.border),
-                    background:Number(hhPct)===v?T.amber:"transparent",color:Number(hhPct)===v?"#fff":T.textSecondary,
-                  }}>{v===0?"Off":(hhType==="percent"?v+"%":fmt(v))}</button>
-                ))}
-                <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
-                  <input type="number" min={0} max={hhType==="percent"?100:undefined} value={hhPct} onChange={e=>setHhValAnd(e.target.value)}
-                    style={{width:60,background:T.card,border:"1px solid "+T.border,color:T.textPrimary,borderRadius:6,padding:"5px 6px",fontSize:12,fontFamily:T.font}}/>
-                  <span style={{fontSize:12,color:T.textMuted}}>{hhType==="percent"?"% off":"KES off"}</span>
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* How the ticked people pay — only matters when 2+ are ticked */}
             {customSel.length>=2 && (
@@ -1844,7 +1910,69 @@ export default function WaiterPOS({ user, menuItems: propMenuItems, holdList, se
         </div>
       )}
 
+      {/* ── Manager: Happy Hour setup ── */}
+      {hhConfigOpen && (
+        <div style={overlay} onClick={()=>!hhBusy&&setHhConfigOpen(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.bg,border:"1px solid "+T.border,borderRadius:16,padding:22,width:"92%",maxWidth:460,maxHeight:"86vh",overflowY:"auto",fontFamily:T.font}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{fontSize:17,fontWeight:800,color:T.amber}}>🍹 Set Happy Hour</div>
+              <button onClick={()=>setHhConfigOpen(false)} style={{border:"none",background:"transparent",color:T.textMuted,fontSize:20,cursor:"pointer"}}>×</button>
+            </div>
+            <div style={{fontSize:12,color:T.textSecondary,marginBottom:16}}>Set the discount once. It applies automatically to every bill for all staff until you turn it off.</div>
+
+            {/* Discount type */}
+            <div style={{fontSize:11,fontWeight:700,color:T.textMuted,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Discount</div>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <div style={{display:"flex",border:"1px solid "+T.border,borderRadius:8,overflow:"hidden"}}>
+                {[["percent","%"],["fixed","KES"]].map(([t,l])=>(
+                  <button key={t} onClick={()=>setHhDraft(d=>({...d,type:t}))} style={{padding:"9px 16px",border:"none",cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:T.font,background:hhDraft.type===t?T.amber:"transparent",color:hhDraft.type===t?"#fff":T.textSecondary}}>{l}</button>
+                ))}
+              </div>
+              <input type="number" min={0} max={hhDraft.type==="percent"?100:undefined} value={hhDraft.value} onChange={e=>setHhDraft(d=>({...d,value:e.target.value}))} placeholder={hhDraft.type==="percent"?"e.g. 15":"e.g. 50"} style={{flex:1,background:T.card,border:"1px solid "+T.border,color:T.textPrimary,borderRadius:8,padding:"9px 12px",fontSize:14,fontFamily:T.font}}/>
+              <span style={{alignSelf:"center",fontSize:13,color:T.textMuted}}>{hhDraft.type==="percent"?"% off":"KES off"}</span>
+            </div>
+
+            {/* Scope */}
+            <div style={{fontSize:11,fontWeight:700,color:T.textMuted,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Applies to</div>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              {[["all","Whole bill"],["items","Only chosen items"]].map(([sc,l])=>(
+                <button key={sc} onClick={()=>setHhDraft(d=>({...d,scope:sc}))} style={{flex:1,padding:"10px",borderRadius:8,cursor:"pointer",fontSize:12.5,fontWeight:700,fontFamily:T.font,border:"1px solid "+(hhDraft.scope===sc?T.amber:T.border),background:hhDraft.scope===sc?T.amber+"18":"transparent",color:hhDraft.scope===sc?T.amber:T.textSecondary}}>{l}</button>
+              ))}
+            </div>
+
+            {/* Item picker */}
+            {hhDraft.scope==="items" && (
+              <div style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:11,color:T.textMuted}}>Tick the items Happy Hour applies to ({hhDraft.items.length} selected)</span>
+                </div>
+                <div style={{maxHeight:200,overflowY:"auto",border:"1px solid "+T.border,borderRadius:8,padding:4}}>
+                  {(ITEMS||[]).map(it=>{
+                    const on=hhDraft.items.includes(it.id);
+                    return (
+                      <button key={it.id} onClick={()=>setHhDraft(d=>({...d,items:on?d.items.filter(x=>x!==it.id):[...d.items,it.id]}))} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderRadius:6,cursor:"pointer",fontFamily:T.font,border:"none",background:on?T.amber+"18":"transparent",marginBottom:2}}>
+                        <span style={{fontSize:12.5,fontWeight:on?700:500,color:on?T.amber:T.textPrimary}}>{on?"☑":"☐"} {it.name}</span>
+                        <span style={{fontSize:11,color:T.textMuted}}>{fmt(it.price)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <button onClick={confirmHappyHour} disabled={hhBusy||!(parseFloat(hhDraft.value)>0)||(hhDraft.scope==="items"&&hhDraft.items.length===0)} style={{width:"100%",padding:"13px",borderRadius:10,border:"none",cursor:"pointer",fontSize:14,fontWeight:800,fontFamily:T.font,background:(parseFloat(hhDraft.value)>0&&!(hhDraft.scope==="items"&&hhDraft.items.length===0))?T.amber:T.border,color:"#fff"}}>
+              {hhBusy?"Saving…":"Turn On Happy Hour"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Toast ── */}
+      {needPerson&&(
+        <div style={{position:"fixed",bottom:32,left:"50%",transform:"translateX(-50%)",background:T.red,color:"#fff",borderRadius:12,padding:"13px 26px",fontSize:14,fontWeight:700,boxShadow:"0 8px 32px rgba(0,0,0,.4)",zIndex:999}}>
+          Add a person to {table==="TAKEAWAY"?"the takeaway order":table} first
+        </div>
+      )}
       {(modal==="kitchen_sent"||modal==="bill_sent")&&(
         <div style={{position:"fixed",bottom:32,left:"50%",transform:"translateX(-50%)",background:modal==="bill_sent"?T.green:T.amber,color:modal==="bill_sent"?"#fff":T.bg,borderRadius:12,padding:"13px 26px",fontSize:14,fontWeight:700,boxShadow:"0 8px 32px rgba(0,0,0,.4)",zIndex:999}}>
           {modal==="kitchen_sent"?"🍳 Order sent to kitchen!":"✓ Invoice sent to cashier!"}

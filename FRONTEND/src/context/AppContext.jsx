@@ -170,6 +170,9 @@ export function AppProvider({ children }) {
     },
     "hold:deleted": ({ id }) => {
       setHoldList(prev => prev.filter(h => String(h.id) !== String(id)));
+      // A recalled/voided bill is a deleted hold — also drop it from the
+      // cashier's Awaiting Payment so it can't be billed twice.
+      setOpenInvoices(prev => prev.filter(i => String(i.id) !== String(id)));
     },
   });
 

@@ -831,7 +831,7 @@ router.get('/invoices', requirePermission('pos'), async (req, res, next) => {
       `SELECT h.*, u.name AS waiter_name
        FROM hold_orders h
        LEFT JOIN users u ON u.id = h.waiter_id
-       WHERE h.notes = 'open-invoice'
+       WHERE h.notes = 'open-invoice' AND h.status <> 'cancelled'
        ORDER BY h.created_at DESC`
     );
 
